@@ -25,7 +25,7 @@ export class UIManager {
       recoverPinRequested: false,
       tosChecked: false,
       roomCodeInput: '',
-      userProfile: null,
+      userProfile: this.socketClient.authenticatedUser,
       publicRooms: [],
       lobbyRoomCode: '----',
       lobbyPlayers: [],
@@ -46,6 +46,13 @@ export class UIManager {
     this.setupNetworkCallbacks();
     this.initEvents();
     this.render();
+    
+    // Automatically load public rooms if already authenticated
+    if (this.state.userProfile) {
+      this.socketClient.getPublicRooms((rooms) => {
+        this.updateState({ publicRooms: rooms || [] });
+      });
+    }
   }
 
   render() {
@@ -95,13 +102,15 @@ export class UIManager {
     this.uiLayer.addEventListener('click', async (e) => {
       const target = e.target;
       
+      if (target.closest('a')) e.preventDefault();
+      
       // Auth Tabs
-      if (target.id === 'tab-login') this.updateState({ authMode: 'login', authMsg: '' });
-      else if (target.id === 'tab-register') this.updateState({ authMode: 'register', authMsg: '' });
-      else if (target.id === 'tab-recover') this.updateState({ authMode: 'recover', authMsg: '', recoverPinRequested: false });
+      if (target.closest('#tab-login')) this.updateState({ authMode: 'login', authMsg: '' });
+      else if (target.closest('#tab-register')) this.updateState({ authMode: 'register', authMsg: '' });
+      else if (target.closest('#tab-recover')) this.updateState({ authMode: 'recover', authMsg: '', recoverPinRequested: false });
       
       // Auth Submit
-      else if (target.id === 'btn-auth-submit') {
+      else if (target.closest('#btn-auth-submit')) {
         const { authUsername: user, authEmail: email, authPassword: pass, authMode } = this.state;
         this.updateState({ authMsg: 'Conectando con el Servidor Central...' });
         
@@ -129,7 +138,7 @@ export class UIManager {
       }
       
       // Recover Password Actions
-      else if (target.id === 'btn-request-pin') {
+      else if (target.closest('#btn-request-pin')) {
         const email = this.state.recoverEmail.trim();
         if (!email) return this.updateState({ authMsg: this.i18n.t('error_missing_email') });
         this.updateState({ authMsg: 'Solicitando PIN...' });
@@ -141,7 +150,7 @@ export class UIManager {
           this.updateState({ authMsg: res.error });
         }
       }
-      else if (target.id === 'btn-reset-password') {
+      else if (target.closest('#btn-reset-password')) {
         const email = this.state.recoverEmail.trim();
         const pin = this.state.recoverPin.trim();
         const newPass = this.state.recoverNewPassword.trim();
@@ -156,15 +165,16 @@ export class UIManager {
       }
       
       // Logout
-      else if (target.id === 'btn-logout') {
+      else if (target.closest('#btn-logout')) {
         this.socketClient.authenticatedUser = null;
+        localStorage.removeItem('triad_vaults_user');
         this.updateState({ userProfile: null, authMsg: '', authPassword: '' });
       }
       
       // Modals
-      else if (target.id === 'btn-show-tos') this.updateState({ activeModal: 'tos' });
-      else if (target.id === 'btn-show-instructions') this.updateState({ activeModal: 'instructions' });
-      else if (target.id === 'btn-close-modal' || target.id === 'btn-close-alert') this.updateState({ activeModal: null });
+      else if (target.closest('#btn-show-tos')) this.updateState({ activeModal: 'tos' });
+      else if (target.closest('#btn-show-instructions')) this.updateState({ activeModal: 'instructions' });
+      else if (target.closest('#btn-close-modal') || target.closest('#btn-close-alert')) this.updateState({ activeModal: null });
       
       // Rooms
       else if (target.closest('#btn-create-room')) {
@@ -174,55 +184,57 @@ export class UIManager {
           else this.showAlert(res.error || 'Error al crear sala');
         });
       }
-      else if (target.id === 'btn-join-room') {
+      else if (target.closest('#btn-join-room')) {
         const code = this.state.roomCodeInput.trim().toUpperCase();
-        if (code.length !== 6) return this.showAlert(this.i18n.t('error_invalid_room_code'));
+        if (code.length !== 4) return this.showAlert(this.i18n.t('error_invalid_room_code'));
         this.socketClient.joinRoom(code, this.state.authUsername, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'No se pudo unir a la sala');
         });
       }
-      else if (target.classList.contains('btn-join-public')) {
-        const code = target.getAttribute('data-code');
+      else if (target.closest('.btn-join-public')) {
+        const btn = target.closest('.btn-join-public');
+        const code = btn.getAttribute('data-code');
         this.socketClient.joinRoom(code, this.state.authUsername, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'No se pudo unir a la sala');
         });
       }
-      else if (target.id === 'btn-leave-lobby' || target.id === 'btn-quit-game') {
+      else if (target.closest('#btn-leave-lobby') || target.closest('#btn-quit-game')) {
         this.socketClient.leaveRoom();
         if (window.stopGameLoop) window.stopGameLoop();
         this.updateState({ currentView: 'main', activeModal: null, isPaused: false });
       }
-      else if (target.id === 'btn-start-game') {
+      else if (target.closest('#btn-start-game')) {
         this.socketClient.startGame();
       }
       
       // In Game Actions
-      else if (target.id === 'btn-hud-pause') {
+      else if (target.closest('#btn-hud-pause')) {
         this.togglePause();
       }
-      else if (target.id === 'btn-resume-game') {
+      else if (target.closest('#btn-resume-game')) {
         this.togglePause(false);
       }
-      else if (target.id === 'btn-respawn') {
+      else if (target.closest('#btn-respawn')) {
         this.updateState({ activeModal: null });
         if (this.onRespawnCallback) this.onRespawnCallback();
       }
-      else if (target.id === 'btn-regenerate-map') {
+      else if (target.closest('#btn-regenerate-map')) {
         this.updateState({ activeModal: null, showRegenerateBtn: false });
         if (window.regenerateMap) window.regenerateMap();
       }
       
       // Audio & Lang
-      else if (target.id === 'btn-toggle-audio' || target.id === 'btn-toggle-audio-pause') {
+      else if (target.closest('#btn-toggle-audio') || target.closest('#btn-toggle-audio-pause')) {
         if (this.soundEngine) {
           const isMuted = this.soundEngine.toggleMute();
           this.updateState({ audioMuted: isMuted });
         }
       }
-      else if (target.classList.contains('lang-selector-btn')) {
-        const lang = target.getAttribute('data-lang');
+      else if (target.closest('.lang-selector-btn')) {
+        const btn = target.closest('.lang-selector-btn');
+        const lang = btn.getAttribute('data-lang');
         this.i18n.setLanguage(lang);
         this.updateState({ lang });
       }

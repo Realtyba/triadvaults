@@ -14,7 +14,9 @@ export class SocketClient {
 
     this.currentRoom = null;
     this.localPlayer = null;
-    this.authenticatedUser = null;
+    
+    const storedUser = localStorage.getItem('triad_vaults_user');
+    this.authenticatedUser = storedUser ? JSON.parse(storedUser) : null;
   }
 
   async register(username, email, password) {
@@ -27,6 +29,7 @@ export class SocketClient {
       const data = await res.json();
       if (data.success) {
         this.authenticatedUser = data.user;
+        localStorage.setItem('triad_vaults_user', JSON.stringify(data.user));
       }
       return data;
     } catch (e) {
@@ -44,6 +47,7 @@ export class SocketClient {
       const data = await res.json();
       if (data.success) {
         this.authenticatedUser = data.user;
+        localStorage.setItem('triad_vaults_user', JSON.stringify(data.user));
       }
       return data;
     } catch (e) {
@@ -189,6 +193,7 @@ export class SocketClient {
       if (this.authenticatedUser) {
         this.authenticatedUser.maxLevelReached = data.maxLevelReached;
         this.authenticatedUser.totalPuzzlesSolved = data.totalPuzzlesSolved;
+        localStorage.setItem('triad_vaults_user', JSON.stringify(this.authenticatedUser));
       }
       if (callback) callback(data);
     });

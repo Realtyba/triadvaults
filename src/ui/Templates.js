@@ -103,7 +103,7 @@ export const renderUI = (t, state) => {
                 <div class="room-item glass-panel" style="display: flex; justify-content: space-between; align-items: center; padding: 8px;">
                   <div>
                     <strong style="color: var(--neon-cyan)">[${r.code}]</strong> Nivel ${r.currentLevel}
-                    <span style="font-size: 0.8rem; color: #aaa;">(${r.players.length}/3 Agentes)</span>
+                    <span style="font-size: 0.8rem; color: #aaa;">(${r.playersCount}/3 Agentes)</span>
                   </div>
                   <button class="btn-join-public btn-sm btn-secondary" data-code="${r.code}">${t('btn_join_room')}</button>
                 </div>

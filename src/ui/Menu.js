@@ -58,6 +58,40 @@ export class UIManager {
   render() {
     if (!this.uiLayer) return;
     this.uiLayer.innerHTML = renderUI((key) => this.i18n.t(key), this.state);
+    this.bindDirectEvents();
+  }
+
+  bindDirectEvents() {
+    const btnLogout = document.getElementById('btn-logout');
+    if (btnLogout) btnLogout.onclick = (e) => {
+      e.stopPropagation();
+      this.socketClient.authenticatedUser = null;
+      localStorage.removeItem('triad_vaults_user');
+      this.updateState({ userProfile: null, authMsg: '', authPassword: '' });
+    };
+
+    const btnCreateRoom = document.getElementById('btn-create-room');
+    if (btnCreateRoom) btnCreateRoom.onclick = (e) => {
+      e.stopPropagation();
+      const level = this.state.userProfile ? this.state.userProfile.maxLevelReached : 1;
+      const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
+      this.socketClient.createRoom(username, level, (res) => {
+        if (res.success) this.showLobby(res.room);
+        else this.showAlert(res.error || 'Error al crear sala');
+      });
+    };
+
+    const btnJoinRoom = document.getElementById('btn-join-room');
+    if (btnJoinRoom) btnJoinRoom.onclick = (e) => {
+      e.stopPropagation();
+      const code = this.state.roomCodeInput.trim().toUpperCase();
+      if (code.length !== 4) return this.showAlert(this.i18n.t('error_invalid_room_code'));
+      const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
+      this.socketClient.joinRoom(code, username, (res) => {
+        if (res.success) this.showLobby(res.room);
+        else this.showAlert(res.error || 'No se pudo unir a la sala');
+      });
+    };
   }
 
   updateState(newState) {
@@ -100,7 +134,9 @@ export class UIManager {
 
     // Click Delegation
     this.uiLayer.addEventListener('click', async (e) => {
-      const target = e.target;
+      try {
+        const target = e.target;
+        if (!target || !target.closest) return;
       
       if (target.closest('a')) e.preventDefault();
       
@@ -179,7 +215,8 @@ export class UIManager {
       // Rooms
       else if (target.closest('#btn-create-room')) {
         const level = this.state.userProfile ? this.state.userProfile.maxLevelReached : 1;
-        this.socketClient.createRoom(this.state.authUsername, level, (res) => {
+        const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
+        this.socketClient.createRoom(username, level, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'Error al crear sala');
         });
@@ -187,7 +224,8 @@ export class UIManager {
       else if (target.closest('#btn-join-room')) {
         const code = this.state.roomCodeInput.trim().toUpperCase();
         if (code.length !== 4) return this.showAlert(this.i18n.t('error_invalid_room_code'));
-        this.socketClient.joinRoom(code, this.state.authUsername, (res) => {
+        const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
+        this.socketClient.joinRoom(code, username, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'No se pudo unir a la sala');
         });
@@ -195,7 +233,8 @@ export class UIManager {
       else if (target.closest('.btn-join-public')) {
         const btn = target.closest('.btn-join-public');
         const code = btn.getAttribute('data-code');
-        this.socketClient.joinRoom(code, this.state.authUsername, (res) => {
+        const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
+        this.socketClient.joinRoom(code, username, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'No se pudo unir a la sala');
         });
@@ -237,6 +276,10 @@ export class UIManager {
         const lang = btn.getAttribute('data-lang');
         this.i18n.setLanguage(lang);
         this.updateState({ lang });
+      }
+      } catch (err) {
+        alert("Error interno detectado: " + err.message);
+        console.error(err);
       }
     });
 

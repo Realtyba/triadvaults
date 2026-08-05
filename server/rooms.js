@@ -13,6 +13,19 @@ export class RoomManager {
   }
 
   createRoom(hostSocketId, hostName) {
+    // 1. Check if user is already in a room
+    for (const [code, room] of this.rooms.entries()) {
+      const existingPlayerIndex = room.players.findIndex(p => p.name === hostName);
+      if (existingPlayerIndex !== -1) {
+        // Update socket ID for the reconnected player
+        room.players[existingPlayerIndex].id = hostSocketId;
+        // If they were the host but someone else became host when they left, maybe we don't change it back?
+        // Let's just update their ID and return the room.
+        return { room, reconnected: true };
+      }
+    }
+
+    // 2. Generate new room
     let roomCode = this.generateRoomCode();
     while (this.rooms.has(roomCode)) {
       roomCode = this.generateRoomCode();
@@ -37,7 +50,7 @@ export class RoomManager {
     };
 
     this.rooms.set(roomCode, room);
-    return room;
+    return { room, reconnected: false };
   }
 
   joinRoom(roomCode, socketId, playerName) {
@@ -47,6 +60,13 @@ export class RoomManager {
     }
 
     const room = this.rooms.get(code);
+
+    // 1. Check if user is already in this room
+    const existingPlayerIndex = room.players.findIndex(p => p.name === playerName);
+    if (existingPlayerIndex !== -1) {
+      room.players[existingPlayerIndex].id = socketId;
+      return { room, player: room.players[existingPlayerIndex], reconnected: true };
+    }
 
     if (room.players.length >= 3) {
       return { error: 'La sala está completa (Máximo 3 agentes).' };

@@ -58,6 +58,8 @@ async function initPgTables() {
         username VARCHAR(50) UNIQUE NOT NULL,
         email VARCHAR(100) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
+        first_name VARCHAR(50),
+        last_name VARCHAR(50),
         reset_code VARCHAR(10),
         max_level_reached INTEGER DEFAULT 1,
         total_puzzles_solved INTEGER DEFAULT 0,
@@ -67,6 +69,12 @@ async function initPgTables() {
       );
     `;
     await client.query(createTableQuery);
+
+    try {
+      await client.query('ALTER TABLE triad_game_users ADD COLUMN first_name VARCHAR(50)');
+      await client.query('ALTER TABLE triad_game_users ADD COLUMN last_name VARCHAR(50)');
+    } catch (e) { /* Column already exists */ }
+
     client.release();
   } catch (err) {
     console.warn('⚠️ No se pudo conectar a PostgreSQL, usando almacenamiento local de respaldo.');
@@ -78,24 +86,28 @@ initPgTables();
 
 export class DatabaseManager {
   // 1. REGISTER USER
-  static async registerUser(username, email, password) {
+  static async registerUser(firstName, lastName, username, email, password) {
     const cleanUser = username.trim();
     const cleanEmail = email.trim().toLowerCase();
+    const cleanFirst = firstName ? firstName.trim() : 'Agente';
+    const cleanLast = lastName ? lastName.trim() : 'Desconocido';
     const secureHash = hashPassword(password);
 
     if (isPgConnected) {
       try {
         const query = `
-          INSERT INTO triad_game_users (username, email, password, max_level_reached, total_puzzles_solved)
-          VALUES ($1, $2, $3, 1, 0)
-          RETURNING id, username, email, max_level_reached, total_puzzles_solved;
+          INSERT INTO triad_game_users (first_name, last_name, username, email, password, max_level_reached, total_puzzles_solved)
+          VALUES ($1, $2, $3, $4, $5, 1, 0)
+          RETURNING id, first_name, last_name, username, email, max_level_reached, total_puzzles_solved;
         `;
-        const res = await pool.query(query, [cleanUser, cleanEmail, secureHash]);
+        const res = await pool.query(query, [cleanFirst, cleanLast, cleanUser, cleanEmail, secureHash]);
         const u = res.rows[0];
         return {
           success: true,
           user: {
             id: u.id,
+            firstName: u.first_name,
+            lastName: u.last_name,
             username: u.username,
             email: u.email,
             maxLevelReached: u.max_level_reached,
@@ -121,6 +133,8 @@ export class DatabaseManager {
       }
 
       users[cleanUser.toLowerCase()] = {
+        firstName: cleanFirst,
+        lastName: cleanLast,
         username: cleanUser,
         email: cleanEmail,
         password: secureHash,
@@ -161,6 +175,8 @@ export class DatabaseManager {
           success: true,
           user: {
             id: user.id,
+            firstName: user.first_name || 'Agente',
+            lastName: user.last_name || 'Desconocido',
             username: user.username,
             email: user.email,
             maxLevelReached: user.max_level_reached,
@@ -185,6 +201,9 @@ export class DatabaseManager {
       if (!isMatch) {
         return { success: false, error: 'Contraseña incorrecta.' };
       }
+
+      if (!user.firstName) user.firstName = 'Agente';
+      if (!user.lastName) user.lastName = 'Desconocido';
 
       return { success: true, user };
     }
@@ -309,5 +328,46 @@ export class DatabaseManager {
       }
     }
     return null;
+  }
+
+  // 6. GET LEADERBOARD
+  static async getLeaderboard() {
+    if (isPgConnected) {
+      try {
+        const query = `
+          SELECT username, first_name, last_name, max_level_reached, total_puzzles_solved
+          FROM triad_game_users
+          ORDER BY max_level_reached DESC, total_puzzles_solved DESC
+          LIMIT 10;
+        `;
+        const res = await pool.query(query);
+        return res.rows.map(u => ({
+          username: u.username,
+          firstName: u.first_name || 'Agente',
+          lastName: u.last_name || 'Desconocido',
+          maxLevelReached: u.max_level_reached,
+          totalPuzzlesSolved: u.total_puzzles_solved
+        }));
+      } catch (err) {
+        console.error('Error fetching leaderboard in Postgres:', err.message);
+        return [];
+      }
+    } else {
+      const users = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf-8') || '{}');
+      const list = Object.values(users).map(u => ({
+        username: u.username,
+        firstName: u.firstName || 'Agente',
+        lastName: u.lastName || 'Desconocido',
+        maxLevelReached: u.maxLevelReached || 1,
+        totalPuzzlesSolved: u.totalPuzzlesSolved || 0
+      }));
+      list.sort((a, b) => {
+        if (b.maxLevelReached !== a.maxLevelReached) {
+          return b.maxLevelReached - a.maxLevelReached;
+        }
+        return b.totalPuzzlesSolved - a.totalPuzzlesSolved;
+      });
+      return list.slice(0, 10);
+    }
   }
 }

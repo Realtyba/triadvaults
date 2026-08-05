@@ -31,6 +31,8 @@ export const renderUI = (t, state) => {
 
         <!-- Form 1: Login & Register Inputs -->
         <div id="form-auth" class="auth-inputs ${state.authMode !== 'recover' ? '' : 'hidden'}">
+          <input type="text" id="auth-firstname" class="${state.authMode === 'register' ? '' : 'hidden'}" placeholder="Nombre" maxlength="30" value="${state.authFirstName}">
+          <input type="text" id="auth-lastname" class="${state.authMode === 'register' ? '' : 'hidden'}" placeholder="Apellido" maxlength="30" value="${state.authLastName}">
           <input type="text" id="auth-username" placeholder="${t('user_placeholder')}" maxlength="16" value="${state.authUsername}">
           <input type="text" id="auth-email" class="${state.authMode === 'register' ? '' : 'hidden'}" placeholder="${t('email_placeholder')}" value="${state.authEmail}">
           <input type="password" id="auth-password" placeholder="${t('pass_placeholder')}" value="${state.authPassword}">
@@ -68,7 +70,7 @@ export const renderUI = (t, state) => {
       <!-- Profile Info -->
       <div id="user-profile" class="user-card">
         <div class="profile-header">
-          <span>AGENTE: <strong>${state.userProfile.username}</strong> (${state.userProfile.email})</span>
+          <span>AGENTE: <strong>${state.userProfile.firstName} ${state.userProfile.lastName}</strong> <span style="font-size: 0.8rem; color: #8a99ad;">(@${state.userProfile.username})</span></span>
           <button id="btn-logout" class="btn-sm">SALIR</button>
         </div>
         <div class="profile-stats">
@@ -109,6 +111,34 @@ export const renderUI = (t, state) => {
                 </div>
               `).join('')
           }
+        </div>
+      </div>
+
+      <!-- Leaderboard -->
+      <div class="menu-box" style="margin-top: 15px;">
+        <h3 style="margin-bottom: 10px; font-size: 14px; color: var(--neon-cyan);">RANKING GLOBAL (TOP 10)</h3>
+        <div id="leaderboard-list" style="background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px;">
+          <table style="width: 100%; text-align: left; font-size: 0.8rem; border-collapse: collapse;">
+            <thead>
+              <tr style="color: var(--neon-pink); border-bottom: 1px solid rgba(255,255,255,0.1);">
+                <th style="padding: 5px;">Rango</th>
+                <th style="padding: 5px;">Agente</th>
+                <th style="padding: 5px; text-align: center;">Nivel</th>
+                <th style="padding: 5px; text-align: center;">Acertijos</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${state.leaderboard.length === 0 ? `<tr><td colspan="4" style="text-align: center; padding: 10px; color: #666;">Cargando ranking...</td></tr>` : 
+                state.leaderboard.map((u, i) => `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); ${u.username === state.userProfile.username ? 'background: rgba(0,243,255,0.1); font-weight: bold;' : ''}">
+                  <td style="padding: 5px; color: ${i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : 'inherit'};">#${i + 1}</td>
+                  <td style="padding: 5px;">${u.firstName} ${u.lastName} <span style="opacity:0.5">(@${u.username})</span></td>
+                  <td style="padding: 5px; text-align: center;">${u.maxLevelReached}</td>
+                  <td style="padding: 5px; text-align: center;">${u.totalPuzzlesSolved}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
         </div>
       </div>
       `}

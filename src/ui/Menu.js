@@ -16,6 +16,8 @@ export class UIManager {
       alertMsg: '',
       authMode: 'login', // 'login', 'register', 'recover'
       authMsg: '',
+      authFirstName: '',
+      authLastName: '',
       authUsername: 'AgenteCyber',
       authEmail: 'agente@cyber.com',
       authPassword: '123', // Development default
@@ -27,6 +29,7 @@ export class UIManager {
       roomCodeInput: '',
       userProfile: this.socketClient.authenticatedUser,
       publicRooms: [],
+      leaderboard: [],
       lobbyRoomCode: '----',
       lobbyPlayers: [],
       isHost: false,
@@ -52,6 +55,14 @@ export class UIManager {
       this.socketClient.getPublicRooms((rooms) => {
         this.updateState({ publicRooms: rooms || [] });
       });
+      this.fetchLeaderboard();
+    }
+  }
+
+  async fetchLeaderboard() {
+    const res = await this.socketClient.getLeaderboard();
+    if (res.success) {
+      this.updateState({ leaderboard: res.leaderboard || [] });
     }
   }
 
@@ -67,6 +78,7 @@ export class UIManager {
       e.stopPropagation();
       this.socketClient.authenticatedUser = null;
       localStorage.removeItem('triad_vaults_user');
+      localStorage.removeItem('triad_vaults_token');
       this.updateState({ userProfile: null, authMsg: '', authPassword: '' });
     };
 
@@ -74,8 +86,7 @@ export class UIManager {
     if (btnCreateRoom) btnCreateRoom.onclick = (e) => {
       e.stopPropagation();
       const level = this.state.userProfile ? this.state.userProfile.maxLevelReached : 1;
-      const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
-      this.socketClient.createRoom(username, level, (res) => {
+      this.socketClient.createRoom(level, (res) => {
         if (res.success) this.showLobby(res.room);
         else this.showAlert(res.error || 'Error al crear sala');
       });
@@ -86,8 +97,7 @@ export class UIManager {
       e.stopPropagation();
       const code = this.state.roomCodeInput.trim().toUpperCase();
       if (code.length !== 4) return this.showAlert(this.i18n.t('error_invalid_room_code'));
-      const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
-      this.socketClient.joinRoom(code, username, (res) => {
+      this.socketClient.joinRoom(code, (res) => {
         if (res.success) this.showLobby(res.room);
         else this.showAlert(res.error || 'No se pudo unir a la sala');
       });
@@ -119,7 +129,9 @@ export class UIManager {
   initEvents() {
     // Input syncing
     this.uiLayer.addEventListener('input', (e) => {
-      if (e.target.id === 'auth-username') this.state.authUsername = e.target.value;
+      if (e.target.id === 'auth-firstname') this.state.authFirstName = e.target.value;
+      else if (e.target.id === 'auth-lastname') this.state.authLastName = e.target.value;
+      else if (e.target.id === 'auth-username') this.state.authUsername = e.target.value;
       else if (e.target.id === 'auth-email') this.state.authEmail = e.target.value;
       else if (e.target.id === 'auth-password') this.state.authPassword = e.target.value;
       else if (e.target.id === 'room-code-input') this.state.roomCodeInput = e.target.value;
@@ -147,13 +159,13 @@ export class UIManager {
       
       // Auth Submit
       else if (target.closest('#btn-auth-submit')) {
-        const { authUsername: user, authEmail: email, authPassword: pass, authMode } = this.state;
+        const { authFirstName: fName, authLastName: lName, authUsername: user, authEmail: email, authPassword: pass, authMode } = this.state;
         this.updateState({ authMsg: 'Conectando con el Servidor Central...' });
         
         if (authMode === 'register') {
           if (!user || !email || !pass) return this.updateState({ authMsg: this.i18n.t('error_missing_fields_reg') });
           if (!this.state.tosChecked) return this.updateState({ authMsg: this.i18n.t('error_accept_tos') });
-          const res = await this.socketClient.register(user, email, pass);
+          const res = await this.socketClient.register(fName, lName, user, email, pass);
           if (res.success) {
             this.updateState({ authMsg: this.i18n.t('success_reg') });
             setTimeout(() => this.showProfile(res.user), 1500);
@@ -204,6 +216,7 @@ export class UIManager {
       else if (target.closest('#btn-logout')) {
         this.socketClient.authenticatedUser = null;
         localStorage.removeItem('triad_vaults_user');
+        localStorage.removeItem('triad_vaults_token');
         this.updateState({ userProfile: null, authMsg: '', authPassword: '' });
       }
       
@@ -215,8 +228,7 @@ export class UIManager {
       // Rooms
       else if (target.closest('#btn-create-room')) {
         const level = this.state.userProfile ? this.state.userProfile.maxLevelReached : 1;
-        const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
-        this.socketClient.createRoom(username, level, (res) => {
+        this.socketClient.createRoom(level, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'Error al crear sala');
         });
@@ -224,8 +236,7 @@ export class UIManager {
       else if (target.closest('#btn-join-room')) {
         const code = this.state.roomCodeInput.trim().toUpperCase();
         if (code.length !== 4) return this.showAlert(this.i18n.t('error_invalid_room_code'));
-        const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
-        this.socketClient.joinRoom(code, username, (res) => {
+        this.socketClient.joinRoom(code, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'No se pudo unir a la sala');
         });
@@ -233,8 +244,7 @@ export class UIManager {
       else if (target.closest('.btn-join-public')) {
         const btn = target.closest('.btn-join-public');
         const code = btn.getAttribute('data-code');
-        const username = this.state.userProfile ? this.state.userProfile.username : this.state.authUsername;
-        this.socketClient.joinRoom(code, username, (res) => {
+        this.socketClient.joinRoom(code, (res) => {
           if (res.success) this.showLobby(res.room);
           else this.showAlert(res.error || 'No se pudo unir a la sala');
         });
@@ -296,6 +306,7 @@ export class UIManager {
     this.socketClient.getPublicRooms((rooms) => {
       this.updateState({ publicRooms: rooms || [] });
     });
+    this.fetchLeaderboard();
   }
 
   showLobby(room) {

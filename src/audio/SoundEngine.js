@@ -1,7 +1,7 @@
 export class SoundEngine {
   constructor() {
     this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    this.isMuted = false;
+    this.isMuted = true;
     this.bgmOscillators = [];
     this.isPlayingBGM = false;
     this.bgmGainNode = this.audioCtx.createGain();

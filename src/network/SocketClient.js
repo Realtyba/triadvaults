@@ -7,29 +7,38 @@ export class SocketClient {
         ? 'http://localhost:3001'
         : window.location.origin);
 
-    this.socket = io(this.baseUrl, {
-      autoConnect: true,
-      transports: ['websocket', 'polling']
-    });
-
     this.currentRoom = null;
     this.localPlayer = null;
     
     const storedUser = localStorage.getItem('triad_vaults_user');
+    const storedToken = localStorage.getItem('triad_vaults_token');
     this.authenticatedUser = storedUser ? JSON.parse(storedUser) : null;
+
+    this.socket = io(this.baseUrl, {
+      autoConnect: !!storedToken,
+      transports: ['websocket', 'polling'],
+      auth: { token: storedToken }
+    });
   }
 
-  async register(username, email, password) {
+  connectSocket(token) {
+    this.socket.auth.token = token;
+    this.socket.connect();
+  }
+
+  async register(firstName, lastName, username, email, password) {
     try {
       const res = await fetch(`${this.baseUrl}/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email, password })
+        body: JSON.stringify({ firstName, lastName, username, email, password })
       });
       const data = await res.json();
       if (data.success) {
         this.authenticatedUser = data.user;
         localStorage.setItem('triad_vaults_user', JSON.stringify(data.user));
+        localStorage.setItem('triad_vaults_token', data.token);
+        this.connectSocket(data.token);
       }
       return data;
     } catch (e) {
@@ -48,6 +57,8 @@ export class SocketClient {
       if (data.success) {
         this.authenticatedUser = data.user;
         localStorage.setItem('triad_vaults_user', JSON.stringify(data.user));
+        localStorage.setItem('triad_vaults_token', data.token);
+        this.connectSocket(data.token);
       }
       return data;
     } catch (e) {
@@ -81,8 +92,17 @@ export class SocketClient {
     }
   }
 
-  createRoom(playerName, level = 1, callback) {
-    this.socket.emit('create_room', { playerName, level }, (response) => {
+  async getLeaderboard() {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/leaderboard`);
+      return await res.json();
+    } catch (e) {
+      return { success: false, leaderboard: [] };
+    }
+  }
+
+  createRoom(level = 1, callback) {
+    this.socket.emit('create_room', { level }, (response) => {
       if (response.success) {
         this.currentRoom = response.room;
         this.localPlayer = response.room.players[0];
@@ -91,8 +111,8 @@ export class SocketClient {
     });
   }
 
-  joinRoom(roomCode, playerName, callback) {
-    this.socket.emit('join_room', { roomCode, playerName }, (response) => {
+  joinRoom(roomCode, callback) {
+    this.socket.emit('join_room', { roomCode }, (response) => {
       if (response.success) {
         this.currentRoom = response.room;
         this.localPlayer = response.player;

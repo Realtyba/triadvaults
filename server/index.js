@@ -7,6 +7,9 @@ import { dirname, join } from 'path';
 import { RoomManager } from './rooms.js';
 import { DatabaseManager } from './db.js';
 import cors from 'cors';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_triad_key_123';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -27,11 +30,15 @@ const roomManager = new RoomManager();
 
 // Auth Endpoints
 app.post('/api/register', async (req, res) => {
-  const { username, email, password } = req.body;
+  const { firstName, lastName, username, email, password } = req.body;
   if (!username || !email || !password) {
     return res.status(400).json({ success: false, error: 'Ingresa Usuario, Correo y Contraseña.' });
   }
-  const result = await DatabaseManager.registerUser(username, email, password);
+  const result = await DatabaseManager.registerUser(firstName, lastName, username, email, password);
+  if (result.success) {
+    const token = jwt.sign({ id: result.user.id, username: result.user.username }, JWT_SECRET, { expiresIn: '7d' });
+    result.token = token;
+  }
   res.json(result);
 });
 
@@ -41,6 +48,10 @@ app.post('/api/login', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Ingresa tu Usuario o Correo y Contraseña.' });
   }
   const result = await DatabaseManager.loginUser(identifier, password);
+  if (result.success) {
+    const token = jwt.sign({ id: result.user.id, username: result.user.username }, JWT_SECRET, { expiresIn: '7d' });
+    result.token = token;
+  }
   res.json(result);
 });
 
@@ -62,18 +73,47 @@ app.post('/api/reset-password', async (req, res) => {
   res.json(result);
 });
 
+app.get('/api/leaderboard', async (req, res) => {
+  const leaderboard = await DatabaseManager.getLeaderboard();
+  res.json({ success: true, leaderboard });
+});
+
 // Serve static frontend build
 app.use(express.static(join(__dirname, '../dist')));
 
+io.use((socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) {
+    return next(new Error('Autenticación denegada: Token no provisto.'));
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    socket.user = decoded; // { id, username }
+    next();
+  } catch (err) {
+    return next(new Error('Autenticación denegada: Token inválido.'));
+  }
+});
+
 io.on('connection', (socket) => {
-  console.log(`[Socket] Conectado: ${socket.id}`);
+  console.log(`[Socket] Conectado: ${socket.id} (${socket.user.username})`);
 
   // Create Room
-  socket.on('create_room', ({ playerName, level = 1 }, callback) => {
-    const room = roomManager.createRoom(socket.id, playerName);
+  socket.on('create_room', ({ level = 1 }, callback) => {
+    const playerName = socket.user.username; // Use secure token username
+    const result = roomManager.createRoom(socket.id, playerName);
+    
+    // If room already existed (reconnect), it returns { room, reconnected: true }
+    const room = result.room || result;
     room.currentLevel = level || 1;
+    
     socket.join(room.code);
-    console.log(`[Sala Creada] Código: ${room.code} por ${playerName} (Nivel ${room.currentLevel})`);
+    
+    if (result.reconnected) {
+      console.log(`[Reconexión a Sala] Código: ${room.code} por ${playerName}`);
+    } else {
+      console.log(`[Sala Creada] Código: ${room.code} por ${playerName} (Nivel ${room.currentLevel})`);
+    }
     
     // Broadcast updated public rooms to all connected clients
     io.emit('public_rooms_updated', roomManager.getPublicRooms());
@@ -87,7 +127,8 @@ io.on('connection', (socket) => {
   });
 
   // Join Room
-  socket.on('join_room', ({ roomCode, playerName }, callback) => {
+  socket.on('join_room', ({ roomCode }, callback) => {
+    const playerName = socket.user.username;
     const result = roomManager.joinRoom(roomCode, socket.id, playerName);
     if (result.error) {
       return callback({ success: false, error: result.error });

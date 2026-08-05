@@ -50,6 +50,13 @@ export class UIManager {
     this.initEvents();
     this.render();
     
+    const storedToken = localStorage.getItem('triad_vaults_token');
+    if (this.state.userProfile && !storedToken) {
+      this.state.userProfile = null;
+      this.socketClient.authenticatedUser = null;
+      localStorage.removeItem('triad_vaults_user');
+    }
+
     // Automatically load public rooms if already authenticated
     if (this.state.userProfile) {
       this.socketClient.getPublicRooms((rooms) => {

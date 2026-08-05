@@ -101,6 +101,36 @@ export class SocketClient {
     }
   }
 
+  async verifyEmail(username, code) {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, code })
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Error de conexión con el servidor.' };
+    }
+  }
+
+  async updateProfile(firstName, lastName, newEmail) {
+    try {
+      const token = localStorage.getItem('triad_vaults_token');
+      const res = await fetch(`${this.baseUrl}/api/profile/update`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ firstName, lastName, newEmail })
+      });
+      return await res.json();
+    } catch (e) {
+      return { success: false, error: 'Error de conexión con el servidor.' };
+    }
+  }
+
   createRoom(level = 1, callback) {
     this.socket.emit('create_room', { level }, (response) => {
       if (response.success) {

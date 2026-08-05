@@ -364,7 +364,7 @@ export class UIManager {
         this.updateState({ lang });
       }
       } catch (err) {
-        alert("Error interno detectado: " + err.message);
+        this.showAlert("Error interno detectado: " + err.message);
         console.error(err);
       }
     });

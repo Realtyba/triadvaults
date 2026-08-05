@@ -65,6 +65,7 @@ async function initPgTables() {
         verification_code VARCHAR(10),
         max_level_reached INTEGER DEFAULT 1,
         total_puzzles_solved INTEGER DEFAULT 0,
+        total_time_played INTEGER DEFAULT 0,
         is_online BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -80,6 +81,7 @@ async function initPgTables() {
     try {
       await client.query('ALTER TABLE triad_game_users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE');
       await client.query('ALTER TABLE triad_game_users ADD COLUMN verification_code VARCHAR(10)');
+      await client.query('ALTER TABLE triad_game_users ADD COLUMN total_time_played INTEGER DEFAULT 0');
     } catch (e) { /* Column already exists */ }
 
     client.release();
@@ -120,7 +122,8 @@ export class DatabaseManager {
             email: u.email,
             isVerified: u.is_verified,
             maxLevelReached: u.max_level_reached,
-            totalPuzzlesSolved: u.total_puzzles_solved
+            totalPuzzlesSolved: u.total_puzzles_solved,
+            totalTimePlayed: u.total_time_played || 0
           },
           verificationCode: verificationCode // passed back to trigger email in index.js
         };
@@ -152,6 +155,7 @@ export class DatabaseManager {
         verificationCode: verificationCode,
         maxLevelReached: 1,
         totalPuzzlesSolved: 0,
+        totalTimePlayed: 0,
         resetCode: null
       };
 
@@ -193,7 +197,8 @@ export class DatabaseManager {
             email: user.email,
             isVerified: user.is_verified,
             maxLevelReached: user.max_level_reached,
-            totalPuzzlesSolved: user.total_puzzles_solved
+            totalPuzzlesSolved: user.total_puzzles_solved,
+            totalTimePlayed: user.total_time_played || 0
           }
         };
       } catch (err) {
@@ -216,9 +221,23 @@ export class DatabaseManager {
       }
 
       if (!user.firstName) user.firstName = 'Agente';
-      if (!user.lastName) user.lastName = 'Desconocido';
+      if (!user.totalPuzzlesSolved) user.totalPuzzlesSolved = 0;
+      if (!user.totalTimePlayed) user.totalTimePlayed = 0;
 
-      return { success: true, user };
+      return {
+        success: true,
+        user: {
+          id: userKey,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          username: user.username,
+          email: user.email,
+          isVerified: user.isVerified || false,
+          maxLevelReached: user.maxLevelReached,
+          totalPuzzlesSolved: user.totalPuzzlesSolved,
+          totalTimePlayed: user.totalTimePlayed
+        }
+      };
     }
   }
 
@@ -323,21 +342,21 @@ export class DatabaseManager {
 
     if (isPgConnected) {
       try {
-        const res = await pool.query(
+        await pool.query(
           `UPDATE triad_game_users 
-           SET max_level_reached = GREATEST(max_level_reached, $1),
-               total_puzzles_solved = total_puzzles_solved + 1
-           WHERE LOWER(username) = LOWER($2)
-           RETURNING username, email, max_level_reached, total_puzzles_solved;`,
-          [levelReached, cleanUser]
+           SET max_level_reached = GREATEST(max_level_reached, $1), 
+               total_puzzles_solved = total_puzzles_solved + 1,
+               total_time_played = total_time_played + $2
+           WHERE LOWER(username) = $3`,
+          [levelReached, timeSpent, cleanUser]
         );
-        if (res.rows.length > 0) {
-          const u = res.rows[0];
+        const resSelect = await pool.query('SELECT max_level_reached, total_puzzles_solved, total_time_played FROM triad_game_users WHERE LOWER(username) = $1', [cleanUser]);
+        if (resSelect.rows.length > 0) {
           return {
-            username: u.username,
-            email: u.email,
-            maxLevelReached: u.max_level_reached,
-            totalPuzzlesSolved: u.total_puzzles_solved
+            username,
+            maxLevelReached: resSelect.rows[0].max_level_reached,
+            totalPuzzlesSolved: resSelect.rows[0].total_puzzles_solved,
+            totalTimePlayed: resSelect.rows[0].total_time_played
           };
         }
       } catch (err) {
@@ -345,16 +364,17 @@ export class DatabaseManager {
       }
     } else {
       const users = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf-8') || '{}');
-      const key = Object.keys(users).find(k => k.toLowerCase() === cleanUser.toLowerCase());
+      const key = Object.keys(users).find(k => k.toLowerCase() === cleanUser);
       if (key && users[key]) {
         users[key].maxLevelReached = Math.max(users[key].maxLevelReached || 1, levelReached);
         users[key].totalPuzzlesSolved = (users[key].totalPuzzlesSolved || 0) + 1;
+        users[key].totalTimePlayed = (users[key].totalTimePlayed || 0) + timeSpent;
         fs.writeFileSync(JSON_DB_FILE, JSON.stringify(users, null, 2));
         return {
           username: users[key].username,
-          email: users[key].email,
           maxLevelReached: users[key].maxLevelReached,
-          totalPuzzlesSolved: users[key].totalPuzzlesSolved
+          totalPuzzlesSolved: users[key].totalPuzzlesSolved,
+          totalTimePlayed: users[key].totalTimePlayed
         };
       }
     }
@@ -392,52 +412,67 @@ export class DatabaseManager {
   }
 
   // 7. UPDATE PROFILE
-  static async updateProfile(userId, firstName, lastName, newEmail) {
+  static async updateProfile(userId, firstName, lastName, newEmail, newUsername) {
     const cleanFirst = firstName ? firstName.trim() : 'Agente';
     const cleanLast = lastName ? lastName.trim() : 'Desconocido';
     const cleanEmail = newEmail.trim().toLowerCase();
+    const cleanUsername = newUsername ? newUsername.trim() : null;
     const newCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     if (isPgConnected) {
       try {
-        // First check if email is taken by someone else
-        const emailCheck = await pool.query('SELECT id, email FROM triad_game_users WHERE LOWER(email) = $1 AND id != $2', [cleanEmail, userId]);
-        if (emailCheck.rows.length > 0) return { success: false, error: 'Este correo ya está en uso por otro agente.' };
-
         // Fetch current user
-        const curr = await pool.query('SELECT email FROM triad_game_users WHERE id = $1', [userId]);
+        const curr = await pool.query('SELECT email, username FROM triad_game_users WHERE id = $1', [userId]);
         if (curr.rows.length === 0) return { success: false, error: 'Usuario no encontrado.' };
 
+        // Check if email is taken by someone else
+        const emailCheck = await pool.query('SELECT id, email FROM triad_game_users WHERE LOWER(email) = $1 AND id != $2', [cleanEmail, userId]);
+        if (emailCheck.rows.length > 0) return { success: false, error: 'Este correo ya está en uso por otro agente.' };
+        
+        // Check if username is taken by someone else
+        if (cleanUsername && cleanUsername.toLowerCase() !== curr.rows[0].username.toLowerCase()) {
+          const userCheck = await pool.query('SELECT id FROM triad_game_users WHERE LOWER(username) = $1 AND id != $2', [cleanUsername.toLowerCase(), userId]);
+          if (userCheck.rows.length > 0) return { success: false, error: 'Este usuario ya está en uso por otro agente.' };
+        }
+
         const emailChanged = curr.rows[0].email !== cleanEmail;
+        const targetUsername = cleanUsername || curr.rows[0].username;
         
         if (emailChanged) {
           await pool.query(
-            'UPDATE triad_game_users SET first_name = $1, last_name = $2, email = $3, is_verified = FALSE, verification_code = $4 WHERE id = $5',
-            [cleanFirst, cleanLast, cleanEmail, newCode, userId]
+            'UPDATE triad_game_users SET first_name = $1, last_name = $2, email = $3, username = $4, is_verified = FALSE, verification_code = $5 WHERE id = $6',
+            [cleanFirst, cleanLast, cleanEmail, targetUsername, newCode, userId]
           );
         } else {
           await pool.query(
-            'UPDATE triad_game_users SET first_name = $1, last_name = $2 WHERE id = $3',
-            [cleanFirst, cleanLast, userId]
+            'UPDATE triad_game_users SET first_name = $1, last_name = $2, username = $3 WHERE id = $4',
+            [cleanFirst, cleanLast, targetUsername, userId]
           );
         }
-        return { success: true, emailChanged, newCode };
+        return { success: true, emailChanged, newCode, username: targetUsername };
       } catch (err) {
         return { success: false, error: 'Error al actualizar perfil.' };
       }
     } else {
       const users = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf-8') || '{}');
-      // No id in json DB, assume userId is username
       const userKey = Object.keys(users).find(k => k.toLowerCase() === userId.toLowerCase());
       if (!userKey) return { success: false, error: 'Usuario no encontrado.' };
 
       // check email taken
       const emailTaken = Object.keys(users).find(k => k !== userKey && users[k].email === cleanEmail);
       if (emailTaken) return { success: false, error: 'Este correo ya está en uso por otro agente.' };
+      
+      // check username taken
+      const targetUsername = cleanUsername || users[userKey].username;
+      if (cleanUsername && cleanUsername.toLowerCase() !== users[userKey].username.toLowerCase()) {
+         const userTaken = Object.keys(users).find(k => k !== userKey && users[k].username.toLowerCase() === cleanUsername.toLowerCase());
+         if (userTaken) return { success: false, error: 'Este usuario ya está en uso por otro agente.' };
+      }
 
       const emailChanged = users[userKey].email !== cleanEmail;
       users[userKey].firstName = cleanFirst;
       users[userKey].lastName = cleanLast;
+      users[userKey].username = targetUsername;
 
       if (emailChanged) {
         users[userKey].email = cleanEmail;
@@ -445,8 +480,9 @@ export class DatabaseManager {
         users[userKey].verificationCode = newCode;
       }
 
+      // If username changed, update the key in JSON (this is tricky in JSON DB, let's just update the value, we find by key anyway)
       fs.writeFileSync(JSON_DB_FILE, JSON.stringify(users, null, 2));
-      return { success: true, emailChanged, newCode };
+      return { success: true, emailChanged, newCode, username: targetUsername };
     }
   }
 
@@ -458,7 +494,7 @@ export class DatabaseManager {
           SELECT username, first_name, last_name, max_level_reached, total_puzzles_solved
           FROM triad_game_users
           ORDER BY max_level_reached DESC, total_puzzles_solved DESC
-          LIMIT 10;
+          LIMIT 100;
         `;
         const res = await pool.query(query);
         return res.rows.map(u => ({
@@ -487,7 +523,7 @@ export class DatabaseManager {
         }
         return b.totalPuzzlesSolved - a.totalPuzzlesSolved;
       });
-      return list.slice(0, 10);
+      return list.slice(0, 100);
     }
   }
 }

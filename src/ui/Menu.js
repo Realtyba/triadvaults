@@ -42,7 +42,13 @@ export class UIManager {
       health: 100,
       objectiveTitle: '',
       showRegenerateBtn: false,
-      audioMuted: this.soundEngine ? this.soundEngine.isMuted : false,
+      editFirstName: undefined,
+      editLastName: undefined,
+      editEmail: undefined,
+      editUsername: undefined,
+      editProfileMsg: '',
+      tosChecked: false,
+      audioMuted: localStorage.getItem('triad_audio_muted') === 'true',
       lang: this.i18n.currentLang
     };
 
@@ -159,6 +165,7 @@ export class UIManager {
       else if (e.target.id === 'edit-firstname') this.state.editFirstName = e.target.value;
       else if (e.target.id === 'edit-lastname') this.state.editLastName = e.target.value;
       else if (e.target.id === 'edit-email') this.state.editEmail = e.target.value;
+      else if (e.target.id === 'edit-username') this.state.editUsername = e.target.value;
     });
 
     this.uiLayer.addEventListener('change', (e) => {
@@ -253,6 +260,7 @@ export class UIManager {
           editFirstName: this.state.userProfile.firstName,
           editLastName: this.state.userProfile.lastName,
           editEmail: this.state.userProfile.email,
+          editUsername: this.state.userProfile.username,
           editProfileMsg: ''
         });
       }
@@ -260,22 +268,27 @@ export class UIManager {
         this.updateState({ activeModal: null });
       }
       else if (target.closest('#btn-save-profile')) {
-        const { editFirstName, editLastName, editEmail } = this.state;
-        if (!editFirstName || !editLastName || !editEmail) return this.updateState({ editProfileMsg: 'Todos los campos son obligatorios.' });
+        const { editFirstName, editLastName, editEmail, editUsername } = this.state;
+        if (!editFirstName || !editLastName || !editEmail || !editUsername) return this.updateState({ editProfileMsg: 'Todos los campos son obligatorios.' });
         
         this.updateState({ editProfileMsg: 'Guardando...' });
-        const res = await this.socketClient.updateProfile(editFirstName, editLastName, editEmail);
-        if (res.success) {
-          const user = { ...this.state.userProfile, firstName: editFirstName, lastName: editLastName, email: editEmail };
-          if (res.emailChanged) {
-            user.isVerified = false;
-            this.updateState({ activeModal: 'verify', verifyMsg: 'Se ha enviado un nuevo código a tu correo.', userProfile: user });
+        try {
+          const res = await this.socketClient.updateProfile(editFirstName, editLastName, editEmail, editUsername);
+          if (res.success) {
+            const user = { ...this.state.userProfile, firstName: editFirstName, lastName: editLastName, email: editEmail, username: res.username };
+            if (res.emailChanged) {
+              user.isVerified = false;
+              this.updateState({ activeModal: 'verify', verifyMsg: 'Se ha enviado un nuevo código a tu correo.', userProfile: user });
+            } else {
+              this.updateState({ activeModal: null, userProfile: user });
+            }
+            localStorage.setItem('triad_vaults_user', JSON.stringify(user));
           } else {
-            this.updateState({ activeModal: null, userProfile: user });
+            this.updateState({ editProfileMsg: res.error });
           }
-          localStorage.setItem('triad_vaults_user', JSON.stringify(user));
-        } else {
-          this.updateState({ editProfileMsg: res.error });
+        } catch (err) {
+          this.showAlert("Error interno detectado: " + err.message);
+          console.error(err);
         }
       }
 
@@ -355,6 +368,7 @@ export class UIManager {
         if (this.soundEngine) {
           const isMuted = this.soundEngine.toggleMute();
           this.updateState({ audioMuted: isMuted });
+          localStorage.setItem('triad_audio_muted', isMuted);
         }
       }
       else if (target.closest('.lang-selector-btn')) {

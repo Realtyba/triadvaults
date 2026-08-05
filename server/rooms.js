@@ -1,6 +1,7 @@
 export class RoomManager {
   constructor() {
     this.rooms = new Map();
+    this.disconnectTimeouts = new Map();
   }
 
   generateRoomCode() {
@@ -16,6 +17,13 @@ export class RoomManager {
     for (const [code, room] of this.rooms.entries()) {
       const existingPlayerIndex = room.players.findIndex(p => p.name === playerName);
       if (existingPlayerIndex !== -1) {
+        
+        // Clear grace period timeout if exists
+        if (this.disconnectTimeouts.has(playerName)) {
+          clearTimeout(this.disconnectTimeouts.get(playerName));
+          this.disconnectTimeouts.delete(playerName);
+        }
+
         room.players[existingPlayerIndex].id = socketId;
         if (room.hostId === room.players[existingPlayerIndex].id || room.players[existingPlayerIndex].isHost) {
            room.hostId = socketId;
@@ -107,6 +115,7 @@ export class RoomManager {
     for (const [code, room] of this.rooms.entries()) {
       const idx = room.players.findIndex(p => p.id === socketId);
       if (idx !== -1) {
+        const playerName = room.players[idx].name;
         room.players.splice(idx, 1);
         affectedRoom = room;
 
@@ -122,6 +131,35 @@ export class RoomManager {
     }
 
     return affectedRoom;
+  }
+
+  schedulePlayerRemoval(socketId, playerName, onRemovedCallback) {
+    // Clear any existing
+    if (this.disconnectTimeouts.has(playerName)) {
+      clearTimeout(this.disconnectTimeouts.get(playerName));
+    }
+    
+    const timeoutId = setTimeout(() => {
+      this.disconnectTimeouts.delete(playerName);
+      
+      // Before removing, ensure the current socketId matches the old one.
+      // If they reconnected, their socketId in the room would be different!
+      let shouldRemove = false;
+      for (const [code, room] of this.rooms.entries()) {
+        const p = room.players.find(p => p.name === playerName);
+        if (p && p.id === socketId) {
+          shouldRemove = true;
+          break;
+        }
+      }
+      
+      if (shouldRemove) {
+        const affectedRoom = this.removePlayer(socketId);
+        if (onRemovedCallback) onRemovedCallback(affectedRoom);
+      }
+    }, 15000); // 15 seconds grace period
+    
+    this.disconnectTimeouts.set(playerName, timeoutId);
   }
 
   getRoom(roomCode) {

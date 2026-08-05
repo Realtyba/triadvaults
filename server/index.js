@@ -107,11 +107,13 @@ const authenticateHTTP = (req, res, next) => {
 };
 
 app.post('/api/profile/update', authenticateHTTP, async (req, res) => {
-  const { firstName, lastName, newEmail } = req.body;
-  const result = await DatabaseManager.updateProfile(req.user.id || req.user.username, firstName, lastName, newEmail);
-  if (result.success && result.emailChanged && result.newCode) {
-    sendVerificationPin(newEmail, result.newCode, req.user.username);
-    delete result.newCode; // Hide from client
+  const { firstName, lastName, newEmail, newUsername } = req.body;
+  const result = await DatabaseManager.updateProfile(req.user.id || req.user.username, firstName, lastName, newEmail, newUsername);
+  if (result.success) {
+    if (result.emailChanged && result.newCode) {
+      sendVerificationPin(newEmail, result.newCode, result.username);
+      delete result.newCode; // Hide from client
+    }
   }
   res.json(result);
 });
@@ -224,34 +226,25 @@ io.on('connection', (socket) => {
   });
 
   // Next Level Trigger & Save Progress
-  socket.on('level_complete', async ({ roomCode, username }) => {
-    const room = roomManager.getRoom(roomCode);
-    if (room) {
-      room.currentLevel += 1;
-      
-      // Save database progress for players in Nube
-      if (username) {
-        const updatedStats = await DatabaseManager.saveProgress(username, room.currentLevel);
-        if (updatedStats) {
-          socket.emit('user_progress_updated', updatedStats);
-        }
-      }
-      for (const p of room.players) {
-        if (p.name) {
-          const stats = await DatabaseManager.saveProgress(p.name, room.currentLevel);
-          if (stats && p.id === socket.id) {
-            socket.emit('user_progress_updated', stats);
-          }
-        }
-      }
-
-      io.to(room.code).emit('load_next_level', { 
+  socket.on('level_complete', async (data) => {
+    const room = roomManager.getRoom(data.roomCode);
+    if (room && room.hostId === socket.id) {
+      room.currentLevel++;
+      io.to(data.roomCode).emit('load_next_level', {
         level: room.currentLevel,
         playersCount: room.players.length
       });
+      
+      for (const p of room.players) {
+        if (p.name) {
+          const stats = await DatabaseManager.saveProgress(p.name, room.currentLevel, data.timeSpent || 0);
+          if (stats) {
+            io.to(p.id).emit('user_progress_updated', stats);
+          }
+        }
+      }
     }
   });
-
   // Leave Room explicitly
   socket.on('leave_room', () => {
     const affectedRoom = roomManager.removePlayer(socket.id);
@@ -265,12 +258,13 @@ io.on('connection', (socket) => {
 
   // Disconnect
   socket.on('disconnect', () => {
-    const affectedRoom = roomManager.removePlayer(socket.id);
-    if (affectedRoom) {
-      io.to(affectedRoom.code).emit('room_updated', affectedRoom);
-    }
-    io.emit('public_rooms_updated', roomManager.getPublicRooms());
-    console.log(`[Socket] Desconectado: ${socket.id}`);
+    roomManager.schedulePlayerRemoval(socket.id, socket.user?.username, (affectedRoom) => {
+      if (affectedRoom) {
+        io.to(affectedRoom.code).emit('room_updated', affectedRoom);
+      }
+      io.emit('public_rooms_updated', roomManager.getPublicRooms());
+    });
+    console.log(`[Socket] Desconectado (con gracia): ${socket.id}`);
   });
 });
 

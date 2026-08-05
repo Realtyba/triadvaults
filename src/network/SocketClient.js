@@ -114,7 +114,7 @@ export class SocketClient {
     }
   }
 
-  async updateProfile(firstName, lastName, newEmail) {
+  async updateProfile(firstName, lastName, newEmail, newUsername) {
     try {
       const token = localStorage.getItem('triad_vaults_token');
       const res = await fetch(`${this.baseUrl}/api/profile/update`, {
@@ -123,7 +123,7 @@ export class SocketClient {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ firstName, lastName, newEmail })
+        body: JSON.stringify({ firstName, lastName, newEmail, newUsername })
       });
       return await res.json();
     } catch (e) {
@@ -201,12 +201,13 @@ export class SocketClient {
     }
   }
 
-  notifyLevelComplete() {
+  notifyLevelComplete(timeSpent = 0) {
     if (this.currentRoom && this.localPlayer && this.localPlayer.isHost) {
       const username = this.authenticatedUser ? this.authenticatedUser.username : this.localPlayer.name;
       this.socket.emit('level_complete', {
         roomCode: this.currentRoom.code,
-        username
+        username,
+        timeSpent
       });
     }
   }

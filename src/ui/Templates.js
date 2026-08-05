@@ -78,7 +78,8 @@ export const renderUI = (t, state) => {
         </div>
         <div class="profile-stats">
           <span>NIVEL MÁXIMO: <strong>${state.userProfile.maxLevelReached}</strong></span>
-          <span>ACERTIJOS: <strong>${state.userProfile.totalPuzzlesSolved}</strong></span>
+          <span>ACERTIJOS: <strong>${state.userProfile.totalPuzzlesSolved || 0}</strong></span>
+          <span>TIEMPO: <strong>${Math.floor((state.userProfile.totalTimePlayed || 0) / 60)}m ${(state.userProfile.totalTimePlayed || 0) % 60}s</strong></span>
         </div>
       </div>
 
@@ -101,10 +102,9 @@ export const renderUI = (t, state) => {
       <!-- Public Rooms Browser -->
       <div class="menu-box" style="margin-top: 15px;">
         <h3 style="margin-bottom: 10px; font-size: 14px; color: var(--neon-cyan);">${t('public_rooms_title')}</h3>
-        <div id="public-rooms-list" style="max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
-          ${state.publicRooms.length === 0 
-            ? `<p style="color: #666; font-size: 12px; text-align: center;">${t('no_public_rooms')}</p>`
-            : state.publicRooms.map(r => `
+        <div id="rooms-list-container" style="max-height: 350px; overflow-y: auto; background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
+          ${state.publicRooms && state.publicRooms.length > 0 
+            ? state.publicRooms.map(r => `
                 <div class="room-item glass-panel" style="display: flex; justify-content: space-between; align-items: center; padding: 8px;">
                   <div>
                     <strong style="color: var(--neon-cyan)">[${r.code}]</strong> Nivel ${r.currentLevel}
@@ -113,6 +113,7 @@ export const renderUI = (t, state) => {
                   <button class="btn-join-public btn-sm btn-secondary" data-code="${r.code}">${t('btn_join_room')}</button>
                 </div>
               `).join('')
+            : `<p style="color: #666; font-size: 12px; text-align: center;">${t('no_public_rooms')}</p>`
           }
         </div>
       </div>
@@ -270,6 +271,9 @@ export const renderUI = (t, state) => {
     <div id="edit-profile-modal" class="glass-panel modal ${state.activeModal === 'edit-profile' ? '' : 'hidden'}" style="z-index: 9999; width: 450px;">
       <h3 style="color: var(--neon-cyan); margin-bottom: 15px;">EDITAR PERFIL</h3>
       <div style="display: flex; flex-direction: column; gap: 10px; text-align: left;">
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Usuario:</label>
+        <input type="text" id="edit-username" value="${state.editUsername !== undefined ? state.editUsername : (state.userProfile ? state.userProfile.username : '')}">
+
         <label style="font-size: 0.8rem; color: var(--text-muted);">Nombre:</label>
         <input type="text" id="edit-firstname" value="${state.editFirstName !== undefined ? state.editFirstName : (state.userProfile ? state.userProfile.firstName : '')}">
         

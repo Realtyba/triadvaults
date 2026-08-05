@@ -199,7 +199,7 @@ class GameApp {
 
     const delta = this.clock.getDelta();
 
-    if (this.isGameRunning && this.localPlayer && this.playerHealth > 0 && !this.uiManager.isPaused) {
+    if (this.isGameRunning && this.localPlayer && this.playerHealth > 0 && !this.uiManager.state.isPaused) {
       // 1. Handle Local Input Movement with smooth wall sliding
       const moveVec = this.input.getMovementVector();
       this.localPlayer.update(delta, moveVec, this.dungeonGen.obstacleBoxes);

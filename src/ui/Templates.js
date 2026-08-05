@@ -71,7 +71,10 @@ export const renderUI = (t, state) => {
       <div id="user-profile" class="user-card">
         <div class="profile-header">
           <span>AGENTE: <strong>${state.userProfile.firstName} ${state.userProfile.lastName}</strong> <span style="font-size: 0.8rem; color: #8a99ad;">(@${state.userProfile.username})</span></span>
-          <button id="btn-logout" class="btn-sm">SALIR</button>
+          <div>
+            <button id="btn-edit-profile" class="btn-sm" style="background: rgba(0, 243, 255, 0.2); border-color: var(--neon-cyan); margin-right: 5px;">EDITAR</button>
+            <button id="btn-logout" class="btn-sm">SALIR</button>
+          </div>
         </div>
         <div class="profile-stats">
           <span>NIVEL MÁXIMO: <strong>${state.userProfile.maxLevelReached}</strong></span>
@@ -249,6 +252,38 @@ export const renderUI = (t, state) => {
       <p>${t('game_over_desc')}</p>
       <button id="btn-respawn" class="btn btn-danger" style="margin-top: 15px;">${t('btn_respawn')}</button>
       <button id="btn-regenerate-map" class="btn btn-secondary ${state.showRegenerateBtn ? '' : 'hidden'}" style="margin-top: 10px; border-color: #ffaa00; color: #ffaa00;">${t('btn_regenerate_map')}</button>
+    </div>
+
+    <!-- Email Verification Modal -->
+    <div id="verification-modal" class="glass-panel modal ${state.activeModal === 'verify' ? '' : 'hidden'}" style="z-index: 10000; width: 450px;">
+      <h3 style="color: var(--neon-green); margin-bottom: 15px;">VERIFICACIÓN REQUERIDA</h3>
+      <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 20px;">
+        Hemos enviado un PIN de 6 dígitos a tu correo. Ingrésalo para activar tu perfil.
+      </p>
+      <input type="text" id="verify-pin" placeholder="PIN de 6 dígitos" maxlength="6" style="text-align: center; font-size: 1.2rem; letter-spacing: 5px;" value="${state.verifyPin || ''}">
+      <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 5px; min-height: 15px;">${state.verifyMsg || ''}</div>
+      <button id="btn-submit-verify" class="btn btn-success" style="margin-top: 15px; width: 100%;">VERIFICAR PERFIL</button>
+      <button id="btn-cancel-verify" class="btn-sm btn-danger" style="margin-top: 10px; width: 100%; border: none;">SALIR (Volver al Login)</button>
+    </div>
+
+    <!-- Edit Profile Modal -->
+    <div id="edit-profile-modal" class="glass-panel modal ${state.activeModal === 'edit-profile' ? '' : 'hidden'}" style="z-index: 9999; width: 450px;">
+      <h3 style="color: var(--neon-cyan); margin-bottom: 15px;">EDITAR PERFIL</h3>
+      <div style="display: flex; flex-direction: column; gap: 10px; text-align: left;">
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Nombre:</label>
+        <input type="text" id="edit-firstname" value="${state.editFirstName !== undefined ? state.editFirstName : (state.userProfile ? state.userProfile.firstName : '')}">
+        
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Apellido:</label>
+        <input type="text" id="edit-lastname" value="${state.editLastName !== undefined ? state.editLastName : (state.userProfile ? state.userProfile.lastName : '')}">
+        
+        <label style="font-size: 0.8rem; color: var(--text-muted);">Correo Electrónico (Requiere verificación si cambia):</label>
+        <input type="text" id="edit-email" value="${state.editEmail !== undefined ? state.editEmail : (state.userProfile ? state.userProfile.email : '')}">
+      </div>
+      <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 5px; min-height: 15px;">${state.editProfileMsg || ''}</div>
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <button id="btn-save-profile" class="btn btn-primary" style="flex: 1;">GUARDAR</button>
+        <button id="btn-cancel-edit" class="btn btn-secondary" style="flex: 1;">CANCELAR</button>
+      </div>
     </div>
 
     <!-- TOS & Privacy Policy Modal -->

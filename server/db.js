@@ -61,6 +61,8 @@ async function initPgTables() {
         first_name VARCHAR(50),
         last_name VARCHAR(50),
         reset_code VARCHAR(10),
+        is_verified BOOLEAN DEFAULT FALSE,
+        verification_code VARCHAR(10),
         max_level_reached INTEGER DEFAULT 1,
         total_puzzles_solved INTEGER DEFAULT 0,
         is_online BOOLEAN DEFAULT FALSE,
@@ -73,6 +75,11 @@ async function initPgTables() {
     try {
       await client.query('ALTER TABLE triad_game_users ADD COLUMN first_name VARCHAR(50)');
       await client.query('ALTER TABLE triad_game_users ADD COLUMN last_name VARCHAR(50)');
+    } catch (e) { /* Column already exists */ }
+
+    try {
+      await client.query('ALTER TABLE triad_game_users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE');
+      await client.query('ALTER TABLE triad_game_users ADD COLUMN verification_code VARCHAR(10)');
     } catch (e) { /* Column already exists */ }
 
     client.release();
@@ -92,15 +99,16 @@ export class DatabaseManager {
     const cleanFirst = firstName ? firstName.trim() : 'Agente';
     const cleanLast = lastName ? lastName.trim() : 'Desconocido';
     const secureHash = hashPassword(password);
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     if (isPgConnected) {
       try {
         const query = `
-          INSERT INTO triad_game_users (first_name, last_name, username, email, password, max_level_reached, total_puzzles_solved)
-          VALUES ($1, $2, $3, $4, $5, 1, 0)
-          RETURNING id, first_name, last_name, username, email, max_level_reached, total_puzzles_solved;
+          INSERT INTO triad_game_users (first_name, last_name, username, email, password, is_verified, verification_code, max_level_reached, total_puzzles_solved)
+          VALUES ($1, $2, $3, $4, $5, FALSE, $6, 1, 0)
+          RETURNING id, first_name, last_name, username, email, is_verified, max_level_reached, total_puzzles_solved;
         `;
-        const res = await pool.query(query, [cleanFirst, cleanLast, cleanUser, cleanEmail, secureHash]);
+        const res = await pool.query(query, [cleanFirst, cleanLast, cleanUser, cleanEmail, secureHash, verificationCode]);
         const u = res.rows[0];
         return {
           success: true,
@@ -110,9 +118,11 @@ export class DatabaseManager {
             lastName: u.last_name,
             username: u.username,
             email: u.email,
+            isVerified: u.is_verified,
             maxLevelReached: u.max_level_reached,
             totalPuzzlesSolved: u.total_puzzles_solved
-          }
+          },
+          verificationCode: verificationCode // passed back to trigger email in index.js
         };
       } catch (err) {
         if (err.code === '23505') {
@@ -138,13 +148,15 @@ export class DatabaseManager {
         username: cleanUser,
         email: cleanEmail,
         password: secureHash,
+        isVerified: false,
+        verificationCode: verificationCode,
         maxLevelReached: 1,
         totalPuzzlesSolved: 0,
         resetCode: null
       };
 
       fs.writeFileSync(JSON_DB_FILE, JSON.stringify(users, null, 2));
-      return { success: true, user: users[cleanUser.toLowerCase()] };
+      return { success: true, user: users[cleanUser.toLowerCase()], verificationCode };
     }
   }
 
@@ -179,6 +191,7 @@ export class DatabaseManager {
             lastName: user.last_name || 'Desconocido',
             username: user.username,
             email: user.email,
+            isVerified: user.is_verified,
             maxLevelReached: user.max_level_reached,
             totalPuzzlesSolved: user.total_puzzles_solved
           }
@@ -348,7 +361,96 @@ export class DatabaseManager {
     return null;
   }
 
-  // 6. GET LEADERBOARD
+  // 6. VERIFY EMAIL
+  static async verifyEmail(username, code) {
+    const cleanUser = username.trim().toLowerCase();
+    const cleanCode = code.trim();
+
+    if (isPgConnected) {
+      try {
+        const res = await pool.query(
+          'SELECT * FROM triad_game_users WHERE LOWER(username) = $1 AND verification_code = $2',
+          [cleanUser, cleanCode]
+        );
+        if (res.rows.length === 0) return { success: false, error: 'Código inválido.' };
+
+        await pool.query('UPDATE triad_game_users SET is_verified = TRUE, verification_code = NULL WHERE LOWER(username) = $1', [cleanUser]);
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: 'Error al verificar correo.' };
+      }
+    } else {
+      const users = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf-8') || '{}');
+      const key = Object.keys(users).find(k => k.toLowerCase() === cleanUser);
+      if (!key || users[key].verificationCode !== cleanCode) return { success: false, error: 'Código inválido.' };
+      
+      users[key].isVerified = true;
+      users[key].verificationCode = null;
+      fs.writeFileSync(JSON_DB_FILE, JSON.stringify(users, null, 2));
+      return { success: true };
+    }
+  }
+
+  // 7. UPDATE PROFILE
+  static async updateProfile(userId, firstName, lastName, newEmail) {
+    const cleanFirst = firstName ? firstName.trim() : 'Agente';
+    const cleanLast = lastName ? lastName.trim() : 'Desconocido';
+    const cleanEmail = newEmail.trim().toLowerCase();
+    const newCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    if (isPgConnected) {
+      try {
+        // First check if email is taken by someone else
+        const emailCheck = await pool.query('SELECT id, email FROM triad_game_users WHERE LOWER(email) = $1 AND id != $2', [cleanEmail, userId]);
+        if (emailCheck.rows.length > 0) return { success: false, error: 'Este correo ya está en uso por otro agente.' };
+
+        // Fetch current user
+        const curr = await pool.query('SELECT email FROM triad_game_users WHERE id = $1', [userId]);
+        if (curr.rows.length === 0) return { success: false, error: 'Usuario no encontrado.' };
+
+        const emailChanged = curr.rows[0].email !== cleanEmail;
+        
+        if (emailChanged) {
+          await pool.query(
+            'UPDATE triad_game_users SET first_name = $1, last_name = $2, email = $3, is_verified = FALSE, verification_code = $4 WHERE id = $5',
+            [cleanFirst, cleanLast, cleanEmail, newCode, userId]
+          );
+        } else {
+          await pool.query(
+            'UPDATE triad_game_users SET first_name = $1, last_name = $2 WHERE id = $3',
+            [cleanFirst, cleanLast, userId]
+          );
+        }
+        return { success: true, emailChanged, newCode };
+      } catch (err) {
+        return { success: false, error: 'Error al actualizar perfil.' };
+      }
+    } else {
+      const users = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf-8') || '{}');
+      // No id in json DB, assume userId is username
+      const userKey = Object.keys(users).find(k => k.toLowerCase() === userId.toLowerCase());
+      if (!userKey) return { success: false, error: 'Usuario no encontrado.' };
+
+      // check email taken
+      const emailTaken = Object.keys(users).find(k => k !== userKey && users[k].email === cleanEmail);
+      if (emailTaken) return { success: false, error: 'Este correo ya está en uso por otro agente.' };
+
+      const emailChanged = users[userKey].email !== cleanEmail;
+      users[userKey].firstName = cleanFirst;
+      users[userKey].lastName = cleanLast;
+
+      if (emailChanged) {
+        users[userKey].email = cleanEmail;
+        users[userKey].isVerified = false;
+        users[userKey].verificationCode = newCode;
+      }
+
+      fs.writeFileSync(JSON_DB_FILE, JSON.stringify(users, null, 2));
+      return { success: true, emailChanged, newCode };
+    }
+  }
+
+  // 8. GET LEADERBOARD
   static async getLeaderboard() {
     if (isPgConnected) {
       try {

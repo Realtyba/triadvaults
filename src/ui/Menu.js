@@ -131,6 +131,16 @@ export class UIManager {
         });
       }
     });
+
+    this.socketClient.onReconnectedToRoom(({ room, inGame }) => {
+      this.socketClient.currentRoom = room;
+      if (inGame) {
+        if (this.onStartGameCallback) this.onStartGameCallback(room.currentLevel, room.players.length);
+        this.showHUD(room.currentLevel, room.players.length);
+      } else {
+        this.showLobby(room);
+      }
+    });
   }
 
   initEvents() {
@@ -145,6 +155,10 @@ export class UIManager {
       else if (e.target.id === 'recover-email') this.state.recoverEmail = e.target.value;
       else if (e.target.id === 'recover-pin') this.state.recoverPin = e.target.value;
       else if (e.target.id === 'recover-new-password') this.state.recoverNewPassword = e.target.value;
+      else if (e.target.id === 'verify-pin') this.state.verifyPin = e.target.value;
+      else if (e.target.id === 'edit-firstname') this.state.editFirstName = e.target.value;
+      else if (e.target.id === 'edit-lastname') this.state.editLastName = e.target.value;
+      else if (e.target.id === 'edit-email') this.state.editEmail = e.target.value;
     });
 
     this.uiLayer.addEventListener('change', (e) => {
@@ -232,6 +246,61 @@ export class UIManager {
       else if (target.closest('#btn-show-instructions')) this.updateState({ activeModal: 'instructions' });
       else if (target.closest('#btn-close-modal') || target.closest('#btn-close-alert')) this.updateState({ activeModal: null });
       
+      // Edit Profile
+      else if (target.closest('#btn-edit-profile')) {
+        this.updateState({ 
+          activeModal: 'edit-profile', 
+          editFirstName: this.state.userProfile.firstName,
+          editLastName: this.state.userProfile.lastName,
+          editEmail: this.state.userProfile.email,
+          editProfileMsg: ''
+        });
+      }
+      else if (target.closest('#btn-cancel-edit')) {
+        this.updateState({ activeModal: null });
+      }
+      else if (target.closest('#btn-save-profile')) {
+        const { editFirstName, editLastName, editEmail } = this.state;
+        if (!editFirstName || !editLastName || !editEmail) return this.updateState({ editProfileMsg: 'Todos los campos son obligatorios.' });
+        
+        this.updateState({ editProfileMsg: 'Guardando...' });
+        const res = await this.socketClient.updateProfile(editFirstName, editLastName, editEmail);
+        if (res.success) {
+          const user = { ...this.state.userProfile, firstName: editFirstName, lastName: editLastName, email: editEmail };
+          if (res.emailChanged) {
+            user.isVerified = false;
+            this.updateState({ activeModal: 'verify', verifyMsg: 'Se ha enviado un nuevo código a tu correo.', userProfile: user });
+          } else {
+            this.updateState({ activeModal: null, userProfile: user });
+          }
+          localStorage.setItem('triad_vaults_user', JSON.stringify(user));
+        } else {
+          this.updateState({ editProfileMsg: res.error });
+        }
+      }
+
+      // Verify Profile
+      else if (target.closest('#btn-submit-verify')) {
+        const pin = this.state.verifyPin;
+        if (!pin || pin.length !== 6) return this.updateState({ verifyMsg: 'Ingresa el PIN de 6 dígitos.' });
+        
+        this.updateState({ verifyMsg: 'Verificando...' });
+        const res = await this.socketClient.verifyEmail(this.state.userProfile.username, pin);
+        if (res.success) {
+          const user = { ...this.state.userProfile, isVerified: true };
+          localStorage.setItem('triad_vaults_user', JSON.stringify(user));
+          this.showProfile(user);
+        } else {
+          this.updateState({ verifyMsg: res.error });
+        }
+      }
+      else if (target.closest('#btn-cancel-verify')) {
+        this.socketClient.authenticatedUser = null;
+        localStorage.removeItem('triad_vaults_user');
+        localStorage.removeItem('triad_vaults_token');
+        this.updateState({ userProfile: null, activeModal: null, authMsg: '', authPassword: '' });
+      }
+      
       // Rooms
       else if (target.closest('#btn-create-room')) {
         const level = this.state.userProfile ? this.state.userProfile.maxLevelReached : 1;
@@ -310,6 +379,17 @@ export class UIManager {
 
   showProfile(user) {
     this.updateState({ userProfile: user });
+    
+    if (user.isVerified === false) {
+      this.updateState({ activeModal: 'verify', verifyMsg: '', verifyPin: '' });
+      return;
+    }
+    
+    // Clear any active modal (in case they verified successfully)
+    if (this.state.activeModal === 'verify') {
+      this.updateState({ activeModal: null });
+    }
+    
     this.socketClient.getPublicRooms((rooms) => {
       this.updateState({ publicRooms: rooms || [] });
     });
@@ -386,6 +466,7 @@ export class UIManager {
   }
 
   togglePause(forceState = null) {
+    if (this.state.health <= 0) return; // Prevent pausing when dead
     const newState = forceState !== null ? forceState : !this.state.isPaused;
     this.updateState({ 
       isPaused: newState,

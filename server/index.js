@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { RoomManager } from './rooms.js';
 import { DatabaseManager } from './db.js';
+import { sendVerificationPin } from './mailer.js';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
 
@@ -38,6 +39,10 @@ app.post('/api/register', async (req, res) => {
   if (result.success) {
     const token = jwt.sign({ id: result.user.id, username: result.user.username }, JWT_SECRET, { expiresIn: '7d' });
     result.token = token;
+    if (result.verificationCode) {
+      sendVerificationPin(result.user.email, result.verificationCode, result.user.username);
+      delete result.verificationCode; // Don't send it back to client
+    }
   }
   res.json(result);
 });
@@ -78,6 +83,39 @@ app.get('/api/leaderboard', async (req, res) => {
   res.json({ success: true, leaderboard });
 });
 
+app.post('/api/verify', async (req, res) => {
+  const { username, code } = req.body;
+  if (!username || !code) {
+    return res.status(400).json({ success: false, error: 'Faltan datos de verificación.' });
+  }
+  const result = await DatabaseManager.verifyEmail(username, code);
+  res.json(result);
+});
+
+// Middleware for JWT protected HTTP routes
+const authenticateHTTP = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ success: false, error: 'No token provided' });
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ success: false, error: 'Invalid token' });
+  }
+};
+
+app.post('/api/profile/update', authenticateHTTP, async (req, res) => {
+  const { firstName, lastName, newEmail } = req.body;
+  const result = await DatabaseManager.updateProfile(req.user.id || req.user.username, firstName, lastName, newEmail);
+  if (result.success && result.emailChanged && result.newCode) {
+    sendVerificationPin(newEmail, result.newCode, req.user.username);
+    delete result.newCode; // Hide from client
+  }
+  res.json(result);
+});
+
 // Serve static frontend build
 app.use(express.static(join(__dirname, '../dist')));
 
@@ -97,6 +135,15 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   console.log(`[Socket] Conectado: ${socket.id} (${socket.user.username})`);
+
+  // Check if player is already in a room (Page reload scenario)
+  const activeRoom = roomManager.reconnectPlayer(socket.id, socket.user.username);
+  if (activeRoom) {
+    socket.join(activeRoom.code);
+    console.log(`[Auto-Reconexión] ${socket.user.username} regresado a la sala ${activeRoom.code}`);
+    socket.emit('reconnected_to_room', { room: activeRoom, inGame: activeRoom.inGame });
+    io.to(activeRoom.code).emit('room_updated', activeRoom);
+  }
 
   // Create Room
   socket.on('create_room', async ({ level = 1 }, callback) => {

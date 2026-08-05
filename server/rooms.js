@@ -12,6 +12,20 @@ export class RoomManager {
     return code;
   }
 
+  reconnectPlayer(socketId, playerName) {
+    for (const [code, room] of this.rooms.entries()) {
+      const existingPlayerIndex = room.players.findIndex(p => p.name === playerName);
+      if (existingPlayerIndex !== -1) {
+        room.players[existingPlayerIndex].id = socketId;
+        if (room.hostId === room.players[existingPlayerIndex].id || room.players[existingPlayerIndex].isHost) {
+           room.hostId = socketId;
+        }
+        return room;
+      }
+    }
+    return null;
+  }
+
   createRoom(hostSocketId, hostName) {
     // 1. Check if user is already in a room
     for (const [code, room] of this.rooms.entries()) {

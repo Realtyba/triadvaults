@@ -192,6 +192,10 @@ export class SocketClient {
     this.socket.on('game_started', callback);
   }
 
+  onReconnectedToRoom(callback) {
+    this.socket.on('reconnected_to_room', callback);
+  }
+
   onPlayerMoved(callback) {
     this.socket.on('player_moved', callback);
   }

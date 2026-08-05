@@ -99,18 +99,21 @@ io.on('connection', (socket) => {
   console.log(`[Socket] Conectado: ${socket.id} (${socket.user.username})`);
 
   // Create Room
-  socket.on('create_room', ({ level = 1 }, callback) => {
+  socket.on('create_room', async ({ level = 1 }, callback) => {
     const playerName = socket.user.username; // Use secure token username
     const result = roomManager.createRoom(socket.id, playerName);
     
     // If room already existed (reconnect), it returns { room, reconnected: true }
     const room = result.room || result;
-    room.currentLevel = level || 1;
+    
+    // SECURE: Fetch true level from database! Do not trust the client payload!
+    const trueLevel = await DatabaseManager.getUserData(playerName);
+    room.currentLevel = trueLevel;
     
     socket.join(room.code);
     
     if (result.reconnected) {
-      console.log(`[Reconexión a Sala] Código: ${room.code} por ${playerName}`);
+      console.log(`[Reconexión a Sala] Código: ${room.code} por ${playerName} (Nivel ${room.currentLevel})`);
     } else {
       console.log(`[Sala Creada] Código: ${room.code} por ${playerName} (Nivel ${room.currentLevel})`);
     }

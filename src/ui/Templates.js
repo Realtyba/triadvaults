@@ -1,7 +1,7 @@
 export const renderUI = (t, state) => {
   return `
     <!-- Top Header Language Switcher -->
-    <div class="top-header-bar" style="display: flex; justify-content: space-between; padding: 10px 20px; gap: 15px;">
+    <div class="top-header-bar ${state.currentView !== 'main' ? 'hidden' : ''}" style="display: flex; justify-content: space-between; padding: 10px 20px; gap: 15px;">
       <div class="audio-controls">
         <button id="btn-toggle-audio" class="btn-sm btn-secondary" style="font-size: 16px;">
           ${state.audioMuted ? '🔇' : '🔊'}

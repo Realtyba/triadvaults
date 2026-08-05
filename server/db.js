@@ -209,6 +209,24 @@ export class DatabaseManager {
     }
   }
 
+  // 2b. GET USER DATA
+  static async getUserData(username) {
+    const cleanUser = username.trim().toLowerCase();
+    if (isPgConnected) {
+      try {
+        const res = await pool.query('SELECT max_level_reached FROM triad_game_users WHERE LOWER(username) = $1', [cleanUser]);
+        if (res.rows.length > 0) return res.rows[0].max_level_reached;
+      } catch (e) {
+        return 1;
+      }
+    } else {
+      const users = JSON.parse(fs.readFileSync(JSON_DB_FILE, 'utf-8') || '{}');
+      const userKey = Object.keys(users).find(k => k.toLowerCase() === cleanUser);
+      if (userKey && users[userKey]) return users[userKey].maxLevelReached || 1;
+    }
+    return 1;
+  }
+
   // 3. REQUEST PASSWORD RESET CODE
   static async requestPasswordReset(email) {
     const cleanEmail = email.trim().toLowerCase();

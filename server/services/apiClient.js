@@ -39,7 +39,7 @@ async function request(path, { method = 'GET', body = null } = {}) {
   if (!apiIsConfigured()) return null;
 
   try {
-    const response = await fetch(`${API_URL}/triadvaults/internal${path}`, {
+    const response = await fetch(`${API_URL}/api/triadvaults/internal${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',

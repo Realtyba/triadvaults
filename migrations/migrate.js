@@ -1,33 +1,34 @@
+#!/usr/bin/env node
+/**
+ * Ejecutor de migraciones. Aplica en orden los `.sql` de esta carpeta que aún no
+ * consten en `triad_schema_migrations`.
+ *
+ * La conexión sale de `server/db/config.js`, la misma que usa el servidor: cuando
+ * cada uno tenía la suya, el migrador creaba las tablas en `tenant_realtyba` y el
+ * servidor las buscaba en otra base, de modo que los usuarios existían pero no
+ * podían iniciar sesión.
+ */
+import 'dotenv/config';
 import pkg from 'pg';
-const { Pool } = pkg;
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { buildPgConfig, describeTarget } from '../server/db/config.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const { Pool } = pkg;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Read Database Connection from Environment or Default Local Postgres
-const pgConfig = {
-  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
-  user: process.env.DB_USERNAME || 'postgres',
-  password: process.env.DB_PASSWORD || 'Qwerty1234ll.',
-  host: process.env.DB_HOST || '127.0.0.1',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_DATABASE || 'tenant_realtyba'
-};
-
+const pgConfig = buildPgConfig();
 const pool = new Pool(pgConfig);
 
 async function runMigrations() {
-  console.log('🚀 Iniciando ejecutor de migraciones PostgreSQL para Triad Vaults...');
+  console.log('🚀 Migraciones de Triad Vaults');
   let client;
 
   try {
     client = await pool.connect();
-    console.log(`✅ Conectado a PostgreSQL en host: ${pgConfig.host}:${pgConfig.port}, base de datos: ${pgConfig.database}`);
+    console.log(`✅ Conectado a ${describeTarget(pgConfig)}`);
 
-    // Create migrations history table
     await client.query(`
       CREATE TABLE IF NOT EXISTS triad_schema_migrations (
         id SERIAL PRIMARY KEY,
@@ -36,38 +37,43 @@ async function runMigrations() {
       );
     `);
 
-    // Get list of already executed migrations
     const executedRes = await client.query('SELECT filename FROM triad_schema_migrations;');
     const executedFiles = new Set(executedRes.rows.map(r => r.filename));
 
-    // Get all SQL files in migrations folder sorted by name
-    const files = fs.readdirSync(__dirname)
+    const files = fs
+      .readdirSync(__dirname)
       .filter(f => f.endsWith('.sql'))
       .sort();
 
     let count = 0;
     for (const file of files) {
-      if (!executedFiles.has(file)) {
-        console.log(`⚡ Ejecutando migración: ${file}...`);
-        const filePath = path.join(__dirname, file);
-        const sql = fs.readFileSync(filePath, 'utf-8');
-
-        await client.query('BEGIN');
-        await client.query(sql);
-        await client.query('INSERT INTO triad_schema_migrations (filename) VALUES ($1);', [file]);
-        await client.query('COMMIT');
-
-        console.log(`  └─ ▶ ¡Migración ${file} aplicada con éxito!`);
-        count++;
-      } else {
-        console.log(`  └─ 🗹 Migración ${file} ya aplicada previamente.`);
+      if (executedFiles.has(file)) {
+        console.log(`  └─ 🗹 ${file} ya aplicada.`);
+        continue;
       }
+
+      console.log(`⚡ Ejecutando ${file}...`);
+      const sql = fs.readFileSync(path.join(__dirname, file), 'utf-8');
+
+      await client.query('BEGIN');
+      await client.query(sql);
+      await client.query('INSERT INTO triad_schema_migrations (filename) VALUES ($1);', [file]);
+      await client.query('COMMIT');
+
+      console.log(`  └─ ▶ ${file} aplicada.`);
+      count++;
     }
 
-    console.log(`\n🎉 Resumen: ${count} migraciones ejecutadas exitosamente.`);
+    console.log(`\n🎉 ${count} migraciones ejecutadas.`);
   } catch (err) {
-    if (client) await client.query('ROLLBACK');
-    console.error('❌ Error ejecutando migraciones PostgreSQL:', err);
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('❌ Error ejecutando migraciones:', err.message);
+    if (err.code === '3D000') {
+      console.error('   La base de datos no existe. Ejecuta antes: npm run db:setup');
+    }
+    if (err.code === '28P01' || err.code === '28000') {
+      console.error('   Credenciales rechazadas. Revisa DB_USERNAME / DB_PASSWORD en .env');
+    }
     process.exit(1);
   } finally {
     if (client) client.release();

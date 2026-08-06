@@ -1,17 +1,30 @@
 import * as THREE from 'three';
+import { moveWithSlide } from '../physics/collision.js';
+import { TargetSelector } from './ghost/TargetSelector.js';
+import { PLAYER_COLORS } from './Player.js';
+
+const GHOST_RADIUS = 0.55;
+const ATTACK_RANGE = 1.3;
+const ATTACK_COOLDOWN = 1.0;
+
+/** Si el camino recto está bloqueado, se prueban desvíos a ambos lados. */
+const DETOUR_ANGLES = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI * 0.75, -Math.PI * 0.75];
 
 export class GhostEnemyEntity {
   constructor(scene) {
     this.scene = scene;
-    this.speed = 2.5; // Base speed
+    this.speed = 2.5;
     this.damageCooldown = 0;
+    this.targetSelector = new TargetSelector();
+    this.targetUid = null;
 
-    // Create 3D Phantom Mesh Group
     this.mesh = new THREE.Group();
+    this.buildMesh();
+    this.scene.add(this.mesh);
+  }
 
-    // Phantom Core (Floating Crimson Crystal/Orb)
-    const coreGeo = new THREE.OctahedronGeometry(0.7, 2);
-    const coreMat = new THREE.MeshStandardMaterial({
+  buildMesh() {
+    this.coreMat = new THREE.MeshStandardMaterial({
       color: 0xff0033,
       emissive: 0xff0022,
       emissiveIntensity: 1.5,
@@ -19,85 +32,130 @@ export class GhostEnemyEntity {
       transparent: true,
       opacity: 0.85
     });
-    this.coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    this.coreMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 2), this.coreMat);
     this.coreMesh.position.y = 1.6;
     this.mesh.add(this.coreMesh);
 
-    // Phantom Ring Aura
-    const ringGeo = new THREE.TorusGeometry(1.0, 0.08, 16, 32);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff0044, wireframe: true });
-    this.ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    this.ringMat = new THREE.MeshBasicMaterial({ color: 0xff0044, wireframe: true });
+    this.ringMesh = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.08, 16, 32), this.ringMat);
     this.ringMesh.position.y = 1.6;
     this.ringMesh.rotation.x = Math.PI / 3;
     this.mesh.add(this.ringMesh);
 
-    // Dynamic Red Danger Point Light
     this.light = new THREE.PointLight(0xff0033, 2.5, 10);
     this.light.position.set(0, 1.8, 0);
     this.mesh.add(this.light);
-
-    // Initial position
-    this.mesh.position.set(0, 0, -10);
-    this.scene.add(this.mesh);
   }
 
+  /** La velocidad escala con el nivel sin llegar nunca a la del jugador (8.5). */
+  /**
+   * Dificultad por nivel, en dos tramos.
+   *
+   * La velocidad crece **asintóticamente** hacia 7,5 (el jugador va a 8,5), no de
+   * forma lineal: con la rampa recta anterior el fantasma pegaba un estirón entre
+   * los niveles 5 y 15 y luego dejaba de cambiar, de modo que la curva de
+   * dificultad se sentía como un muro seguido de una meseta.
+   *
+   * Alcanzado el techo, lo que sube es la **agresividad**: cambia de objetivo
+   * antes y se ceba más con quien está resolviendo el puzle. Seguir subiendo la
+   * velocidad bruta solo haría el juego imposible, no más interesante.
+   */
   setSpeedForLevel(levelNum) {
-    // Speed increases progressively with each solved level, up to a maximum of 8.0
-    // Player speed is 8.5, so at max level it is almost as fast as the player!
-    this.speed = Math.min(8.0, 2.5 + (levelNum - 1) * 0.4);
+    const level = Math.max(1, levelNum);
+    const ramp = 1 - Math.exp(-(level - 1) / 7); // 0 en el nivel 1, ~0.87 en el 15
+    this.speed = 2.5 + ramp * 5.0;
+
+    // De 0 en el nivel 15 a 1 en el 40.
+    const pressure = Math.max(0, Math.min(1, (level - 15) / 25));
+    this.targetSelector.setAggression(pressure);
   }
 
   spawnAt(x, z) {
     this.mesh.position.set(x, 0, z);
+    this.targetSelector.reset();
+    this.targetUid = null;
   }
 
-  update(delta, playerPositions = [], onDamagePlayerCallback) {
-    if (!playerPositions || playerPositions.length === 0) return;
+  setPosition(position) {
+    this.mesh.position.set(position.x, position.y, position.z);
+  }
 
-    // Floating idle animation
+  /** El aura toma el color del agente perseguido: se ve a quién va sin leer el HUD. */
+  setTargetIndicator(uid, players) {
+    if (this.targetUid === uid) return;
+    this.targetUid = uid;
+
+    const target = players.find(p => p.uid === uid);
+    const color = target ? PLAYER_COLORS[target.index % PLAYER_COLORS.length] : 0xff0044;
+    this.ringMat.color.setHex(color);
+  }
+
+  animateIdle(delta) {
     const time = Date.now() * 0.003;
     this.coreMesh.position.y = 1.6 + Math.sin(time * 2) * 0.25;
     this.ringMesh.rotation.z += delta * 1.5;
     this.ringMesh.rotation.y += delta * 0.8;
+  }
 
-    // Find nearest player
-    let nearestPos = null;
-    let minDistance = Infinity;
+  /**
+   * Lógica autoritativa del host.
+   *
+   * @param {number} delta
+   * @param {Array<{uid, index, position, health, alive, onPlate}>} players
+   * @param {Array<THREE.Box3>} obstacleBoxes
+   * @param {(targetUid: string, amount: number) => void} onDamage
+   */
+  update(delta, players = [], obstacleBoxes = [], onDamage) {
+    this.animateIdle(delta);
 
-    playerPositions.forEach(pos => {
-      const dist = this.mesh.position.distanceTo(pos);
-      if (dist < minDistance) {
-        minDistance = dist;
-        nearestPos = pos;
-      }
-    });
+    const target = this.targetSelector.update(players, this.mesh.position, delta);
+    if (!target) return null;
 
-    if (nearestPos) {
-      // Move towards nearest player
-      const dir = nearestPos.clone().sub(this.mesh.position);
-      dir.y = 0; // Keep on horizontal plane
+    this.setTargetIndicator(target.uid, players);
+    this.moveTowards(target.position, delta, obstacleBoxes);
 
-      if (dir.lengthSq() > 0.01) {
-        dir.normalize();
-        this.mesh.position.add(dir.multiplyScalar(this.speed * delta));
-      }
+    if (this.damageCooldown > 0) {
+      this.damageCooldown -= delta;
+    } else if (this.mesh.position.distanceTo(target.position) < ATTACK_RANGE) {
+      this.damageCooldown = ATTACK_COOLDOWN;
+      // El uid identifica a la víctima: antes el daño se atribuía siempre al host.
+      if (onDamage) onDamage(target.uid);
+    }
 
-      // Check collision / attack distance
-      if (this.damageCooldown > 0) {
-        this.damageCooldown -= delta;
-      } else if (minDistance < 1.3) {
-        // Deal 20 Damage to Player Shield
-        this.damageCooldown = 1.0; // 1 second attack cooldown
-        if (onDamagePlayerCallback) {
-          onDamagePlayerCallback(20);
-        }
+    return target.uid;
+  }
+
+  /**
+   * Avanza hacia el objetivo respetando los muros. Si el camino directo está
+   * bloqueado, prueba desvíos crecientes en vez de atravesar la geometría.
+   */
+  moveTowards(targetPosition, delta, obstacleBoxes) {
+    const direction = new THREE.Vector3(
+      targetPosition.x - this.mesh.position.x,
+      0,
+      targetPosition.z - this.mesh.position.z
+    );
+    if (direction.lengthSq() < 0.01) return;
+    direction.normalize();
+
+    const distance = this.speed * delta;
+    const baseAngle = Math.atan2(direction.x, direction.z);
+
+    for (const offset of DETOUR_ANGLES) {
+      const angle = baseAngle + offset;
+      const step = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle)).multiplyScalar(distance);
+      if (moveWithSlide(this.mesh.position, step, obstacleBoxes, GHOST_RADIUS)) {
+        this.mesh.rotation.y = angle;
+        return;
       }
     }
   }
 
   destroy() {
-    if (this.mesh) {
-      this.scene.remove(this.mesh);
-    }
+    this.scene.remove(this.mesh);
+    this.mesh.traverse(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
   }
 }

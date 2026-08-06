@@ -1,18 +1,45 @@
 import nodemailer from 'nodemailer';
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
+let transporter = null;
+
+/** ¿Hay credenciales SMTP? Sin ellas los PIN solo se escriben en consola. */
+export function mailerIsConfigured() {
+  return !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+/**
+ * El transporte se crea la primera vez que hace falta, no al importar el módulo:
+ * así un SMTP mal configurado no cuesta nada en el arranque del servidor ni en
+ * los scripts que importan este fichero de rebote.
+ */
+function getTransporter() {
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      secure: false, // true para 465, false para el resto de puertos
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
   }
-});
+  return transporter;
+}
+
+/**
+ * Cuando no hay SMTP, el PIN quedaba solo en la consola del servidor y no había
+ * forma de completar el registro desde el navegador. Con `AUTH_DEV_ECHO_PIN` las
+ * rutas pueden devolverlo en la respuesta para poder probar sin montar correo.
+ * Nunca en producción, pase lo que pase en la configuración.
+ */
+export function devPinEchoEnabled() {
+  return process.env.NODE_ENV !== 'production' && process.env.AUTH_DEV_ECHO_PIN === 'true';
+}
 
 export const sendRecoveryPin = async (email, resetCode, username) => {
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.warn(`[MAILER] Correo no enviado (credenciales no configuradas). PIN: ${resetCode}`);
+  if (!mailerIsConfigured()) {
+    console.warn(`[MAILER] Correo no enviado (sin credenciales SMTP). PIN recuperación: ${resetCode}`);
     return false;
   }
 
@@ -43,18 +70,18 @@ export const sendRecoveryPin = async (email, resetCode, username) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await getTransporter().sendMail(mailOptions);
     console.log(`[MAILER] Correo de recuperación enviado a ${email}`);
     return true;
   } catch (error) {
-    console.error(`[MAILER] Error al enviar correo a ${email}:`, error);
+    console.error(`[MAILER] No se pudo enviar a ${email}: ${error.message}`);
     return false;
   }
 };
 
 export const sendVerificationPin = async (email, code, username) => {
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    console.warn(`[MAILER] Correo no enviado (credenciales no configuradas). PIN Verificación: ${code}`);
+  if (!mailerIsConfigured()) {
+    console.warn(`[MAILER] Correo no enviado (sin credenciales SMTP). PIN verificación: ${code}`);
     return false;
   }
 
@@ -85,11 +112,11 @@ export const sendVerificationPin = async (email, code, username) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    await getTransporter().sendMail(mailOptions);
     console.log(`[MAILER] Correo de verificación enviado a ${email}`);
     return true;
   } catch (error) {
-    console.error(`[MAILER] Error al enviar correo de verificación a ${email}:`, error);
+    console.error(`[MAILER] No se pudo enviar la verificación a ${email}: ${error.message}`);
     return false;
   }
 };

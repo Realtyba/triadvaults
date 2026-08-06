@@ -1,147 +1,189 @@
 import * as THREE from 'three';
+import { generateLayout, WALL_HEIGHT, WALL_THICKNESS } from './LayoutGen.js';
+import { createGridTexture, createWallRoughnessTexture } from '../engine/textures.js';
 
-const LEVEL_THEMES = [
-  { name: 'CÍAN CYBER', color: 0x00f3ff, bg: 0x060812, wall: 0x13172b },
-  { name: 'MAGENTA SYNTH', color: 0xff0077, bg: 0x12060e, wall: 0x2b1320 },
-  { name: 'MATRIX ESMERALDA', color: 0x00ff66, bg: 0x05120a, wall: 0x132b1a },
-  { name: 'ÁMBAR IMPERIAL', color: 0xffaa00, bg: 0x120e05, wall: 0x2b2213 },
-  { name: 'PÚRPURA CÓSMICO', color: 0x9d00ff, bg: 0x0c0512, wall: 0x20132b }
-];
-
+/**
+ * Construye la sala 3D a partir del trazado calculado por `LayoutGen`.
+ * Aquí solo hay geometría: las decisiones de diseño (dónde va cada muro, si la
+ * salida es alcanzable) ya vienen resueltas y validadas.
+ */
 export class DungeonGenerator {
   constructor(scene) {
     this.scene = scene;
-    this.dungeonGroup = new THREE.Group();
-    this.scene.add(this.dungeonGroup);
+    this.group = new THREE.Group();
+    this.scene.add(this.group);
     this.obstacleBoxes = [];
+    this.layout = null;
   }
 
   clear() {
-    while (this.dungeonGroup.children.length > 0) {
-      const obj = this.dungeonGroup.children[0];
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
-        else obj.material.dispose();
-      }
-      this.dungeonGroup.remove(obj);
+    while (this.group.children.length > 0) {
+      const obj = this.group.children[0];
+      obj.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach(m => m.dispose());
+        }
+      });
+      this.group.remove(obj);
     }
     this.obstacleBoxes = [];
   }
 
-  generateLevel(levelNum = 1, seedOffset = 0) {
+  /**
+   * @param {number} levelNum
+   * @param {number} baseSeed   semilla de la sala (viene del servidor, igual para todos)
+   * @param {number} seedOffset variante al regenerar
+   * @param {number} plateCount placas requeridas, = número de agentes
+   */
+  generateLevel(levelNum = 1, baseSeed = 1, seedOffset = 0, plateCount = 1) {
     this.clear();
 
-    const theme = LEVEL_THEMES[(levelNum - 1) % LEVEL_THEMES.length];
-    const seed = Math.floor(Math.abs(Math.sin((levelNum + seedOffset * 100) * 9999) * 10000));
+    const layout = generateLayout(levelNum, baseSeed, seedOffset, plateCount);
+    this.layout = layout;
 
-    // Room dimensions vary procedurally
-    const sizeX = Math.min(18 + (levelNum % 3) * 4, 34);
-    const sizeZ = Math.min(18 + Math.floor(levelNum / 2) * 4, 34);
+    const { theme, sizeX, sizeZ } = layout;
+    this.buildFloor(sizeX, sizeZ, theme);
 
-    const halfX = sizeX / 2;
-    const halfZ = sizeZ / 2;
-
-    // Floor Mesh
-    const floorGeo = new THREE.PlaneGeometry(sizeX, sizeZ);
-    floorGeo.rotateX(-Math.PI / 2);
-
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: theme.bg,
-      roughness: 0.3,
-      metalness: 0.8
-    });
-
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.receiveShadow = true;
-    this.dungeonGroup.add(floor);
-
-    // Dynamic Floor Grid Pattern with Theme Color
-    const gridHelper = new THREE.GridHelper(Math.max(sizeX, sizeZ), Math.max(sizeX, sizeZ), theme.color, 0x222a45);
-    gridHelper.position.y = 0.02;
-    this.dungeonGroup.add(gridHelper);
-
-    // Wall Material
     const wallMat = new THREE.MeshStandardMaterial({
       color: theme.wall,
-      roughness: 0.3,
-      metalness: 0.8
+      roughness: 0.55,
+      metalness: 0.65,
+      roughnessMap: createWallRoughnessTexture()
     });
 
-    const wallHeight = 4.0;
-    const wallThickness = 0.8;
+    // Emisivo, no `MeshBasicMaterial`: el bloom solo recoge lo que emite luz, y
+    // con material básico las molduras eran color plano por muy brillante que fuese.
+    //
+    // La intensidad es contenida y se deja pasar por el mapeo de tonos: sin él, y
+    // con valores altos, el color satura a cían puro y las molduras se ven como
+    // pegatinas planas en vez de como luz.
+    const trimMat = new THREE.MeshStandardMaterial({
+      color: theme.color,
+      emissive: theme.color,
+      emissiveIntensity: 0.9,
+      roughness: 0.35,
+      metalness: 0.1
+    });
 
-    const createWall = (x, z, width, depth) => {
-      const wallGeo = new THREE.BoxGeometry(width, wallHeight, depth);
-      const wall = new THREE.Mesh(wallGeo, wallMat);
-      wall.position.set(x, wallHeight / 2, z);
-      wall.castShadow = true;
-      wall.receiveShadow = true;
-      this.dungeonGroup.add(wall);
-
-      // Add Top Glowing Trim
-      const trimGeo = new THREE.BoxGeometry(width + 0.05, 0.2, depth + 0.05);
-      const trimMat = new THREE.MeshBasicMaterial({ color: theme.color });
-      const trim = new THREE.Mesh(trimGeo, trimMat);
-      trim.position.set(x, wallHeight + 0.1, z);
-      this.dungeonGroup.add(trim);
-
-      this.obstacleBoxes.push(new THREE.Box3().setFromObject(wall));
-    };
-
-    // Boundary Outer Walls
-    createWall(0, -halfZ - wallThickness/2, sizeX + wallThickness*2, wallThickness);
-    createWall(0, halfZ + wallThickness/2, sizeX + wallThickness*2, wallThickness);
-    createWall(-halfX - wallThickness/2, 0, wallThickness, sizeZ);
-    createWall(halfX + wallThickness/2, 0, wallThickness, sizeZ);
-
-    // Procedural Internal Maze Walls based on seed
-    const wallCount = 3 + Math.floor(levelNum * 1.2);
-    for (let i = 0; i < wallCount; i++) {
-      const isHorizontal = Math.sin(seed + i * 17) > 0;
-      const wx = Math.floor(Math.sin(seed + i * 31) * (halfX - 5));
-      const wz = Math.floor(Math.cos(seed + i * 47) * (halfZ - 5));
-
-      const wLength = 4 + (i % 3) * 2;
-      const wWidth = isHorizontal ? wLength : 1.2;
-      const wDepth = isHorizontal ? 1.2 : wLength;
-
-      // Construct a theoretical Box3 for the wall to test overlaps
-      const wallBox = new THREE.Box3().setFromCenterAndSize(
-        new THREE.Vector3(wx, wallHeight / 2, wz),
-        new THREE.Vector3(wWidth, wallHeight, wDepth)
-      );
-
-      // Define exclusion zones for spawn and exit
-      const spawnBox = new THREE.Box3().setFromCenterAndSize(
-        new THREE.Vector3(0, wallHeight / 2, halfZ - 3),
-        new THREE.Vector3(8, wallHeight, 8) // 8x8 exclusion area
-      );
-
-      const exitBox = new THREE.Box3().setFromCenterAndSize(
-        new THREE.Vector3(0, wallHeight / 2, -halfZ + 2),
-        new THREE.Vector3(8, wallHeight, 8)
-      );
-
-      // Check if wall overlaps with crucial zones
-      if (wallBox.intersectsBox(spawnBox) || wallBox.intersectsBox(exitBox)) {
-        continue;
-      }
-      
-      // Also protect the very center (0,0) just in case
-      if (Math.abs(wx) < 2 && Math.abs(wz) < 2) continue;
-
-      createWall(wx, wz, wWidth, wDepth);
-    }
+    this.buildBoundary(sizeX, sizeZ, wallMat, trimMat);
+    layout.walls.forEach(wall => this.buildWall(wall.x, wall.z, wall.width, wall.depth, wallMat, trimMat));
 
     return {
-      seed,
+      seed: layout.seed,
+      seedLabel: layout.seedLabel,
       theme,
       sizeX,
       sizeZ,
-      spawnPos: new THREE.Vector3(0, 0, halfZ - 3),
-      exitPos: new THREE.Vector3(0, 0, -halfZ + 2),
+      navGrid: layout.grid,
+      plates: layout.plates,
+      spawnPos: new THREE.Vector3(layout.spawn.x, 0, layout.spawn.z),
+      exitPos: new THREE.Vector3(layout.exit.x, 0, layout.exit.z),
       obstacleBoxes: this.obstacleBoxes
     };
+  }
+
+  /**
+   * Suelo del nivel.
+   *
+   * La rejilla se dibuja como textura sobre el propio suelo en vez de con un
+   * `GridHelper`: aquél pinta líneas de 1px que no reciben luz ni sombra, y se
+   * leía como una herramienta de depuración superpuesta a la escena.
+   */
+  buildFloor(sizeX, sizeZ, theme) {
+    const gridTexture = createGridTexture(theme.color);
+    gridTexture.repeat.set(sizeX / 4, sizeZ / 4);
+
+    const floorGeo = new THREE.PlaneGeometry(sizeX, sizeZ);
+    floorGeo.rotateX(-Math.PI / 2);
+
+    const floor = new THREE.Mesh(
+      floorGeo,
+      new THREE.MeshStandardMaterial({
+        color: theme.bg,
+        roughness: 0.42,
+        metalness: 0.72,
+        map: gridTexture,
+        emissive: theme.color,
+        emissiveMap: gridTexture,
+        emissiveIntensity: 0.35 // la rejilla brilla lo justo para que el bloom la roce
+      })
+    );
+    floor.receiveShadow = true;
+    this.group.add(floor);
+
+    this.buildVoid(sizeX, sizeZ, theme);
+  }
+
+  /**
+   * Plataforma exterior que se pierde en la niebla.
+   *
+   * Sin ella el suelo terminaba a plomo y todo lo que había más allá era negro
+   * absoluto: media pantalla vacía y la sensación de estar sobre un recorte
+   * flotando en la nada. Con una rejilla tenue que se disuelve, el mundo parece
+   * continuar más allá de los muros.
+   */
+  buildVoid(sizeX, sizeZ, theme) {
+    const span = Math.max(sizeX, sizeZ) * 4;
+    const voidTexture = createGridTexture(theme.color, 'void');
+    voidTexture.repeat.set(span / 8, span / 8);
+
+    const geometry = new THREE.PlaneGeometry(span, span);
+    geometry.rotateX(-Math.PI / 2);
+
+    const plane = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({
+        color: theme.bg,
+        roughness: 0.9,
+        metalness: 0.3,
+        emissive: theme.color,
+        emissiveMap: voidTexture,
+        emissiveIntensity: 0.035, // apenas insinuada: es fondo, no escenario
+        fog: true
+      })
+    );
+    // Por debajo del suelo de la sala, para que no compitan por el mismo plano.
+    plane.position.y = -0.6;
+    this.group.add(plane);
+  }
+
+  buildBoundary(sizeX, sizeZ, wallMat, trimMat) {
+    const halfX = sizeX / 2;
+    const halfZ = sizeZ / 2;
+    const t = WALL_THICKNESS;
+
+    this.buildWall(0, -halfZ - t / 2, sizeX + t * 2, t, wallMat, trimMat);
+    this.buildWall(0, halfZ + t / 2, sizeX + t * 2, t, wallMat, trimMat);
+    this.buildWall(-halfX - t / 2, 0, t, sizeZ, wallMat, trimMat);
+    this.buildWall(halfX + t / 2, 0, t, sizeZ, wallMat, trimMat);
+  }
+
+  /**
+   * Un muro y su franja luminosa.
+   *
+   * La franja va **metida hacia dentro**, no desbordando el muro. Con la cámara
+   * cenital lo que se ve de un muro es su cara superior, así que una moldura del
+   * mismo tamaño la tapaba entera y todos los muros se leían como losas de neón
+   * macizas. Dejando un borde oscuro alrededor, la franja se lee como una luz
+   * empotrada y el muro recupera su volumen.
+   */
+  buildWall(x, z, width, depth, wallMat, trimMat) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(width, WALL_HEIGHT, depth), wallMat);
+    wall.position.set(x, WALL_HEIGHT / 2, z);
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    this.group.add(wall);
+
+    const inset = 0.28;
+    const trim = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.max(0.12, width - inset), 0.12, Math.max(0.12, depth - inset)),
+      trimMat
+    );
+    trim.position.set(x, WALL_HEIGHT + 0.02, z);
+    this.group.add(trim);
+
+    this.obstacleBoxes.push(new THREE.Box3().setFromObject(wall));
   }
 }

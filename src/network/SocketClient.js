@@ -1,256 +1,170 @@
 import { io } from 'socket.io-client';
+import { EVENTS } from '../../shared/events.js';
+import { resolveBaseUrl } from './ApiClient.js';
+import { session } from './session.js';
 
+/**
+ * Transporte en tiempo real.
+ *
+ * La identidad del jugador es `uid` (id de usuario), no `socket.id`: el socket
+ * cambia en cada reconexión, y ese era el motivo de que tras reconectar el
+ * personaje dejase de responder y el fantasma se quedase congelado.
+ */
 export class SocketClient {
-  constructor() {
-    this.baseUrl = import.meta.env.VITE_API_URL || 
-      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-        ? 'http://localhost:3001'
-        : window.location.origin);
-
+  constructor(baseUrl = resolveBaseUrl()) {
+    this.baseUrl = baseUrl;
     this.currentRoom = null;
-    this.localPlayer = null;
-    
-    const storedUser = localStorage.getItem('triad_vaults_user');
-    const storedToken = localStorage.getItem('triad_vaults_token');
-    this.authenticatedUser = storedUser ? JSON.parse(storedUser) : null;
+    this.uid = null;
+    this.listeners = new Map();
 
-    this.socket = io(this.baseUrl, {
-      autoConnect: !!storedToken,
+    this.socket = io(baseUrl, {
+      autoConnect: session.isValid(),
       transports: ['websocket', 'polling'],
-      auth: { token: storedToken }
+      auth: { token: session.getToken() },
+      reconnection: true,
+      reconnectionAttempts: 12,
+      reconnectionDelay: 800,
+      reconnectionDelayMax: 5000
     });
+
+    this.syncUidFromSession();
+    this.registerCoreEvents();
   }
 
-  connectSocket(token) {
-    this.socket.auth.token = token;
+  syncUidFromSession() {
+    const user = session.getUser();
+    this.uid = user ? String(user.id) : null;
+  }
+
+  connectWithToken(token) {
+    this.syncUidFromSession();
+    this.socket.auth = { token };
+    if (this.socket.connected) this.socket.disconnect();
     this.socket.connect();
   }
 
-  async register(firstName, lastName, username, email, password) {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firstName, lastName, username, email, password })
-      });
-      const data = await res.json();
-      if (data.success) {
-        this.authenticatedUser = data.user;
-        localStorage.setItem('triad_vaults_user', JSON.stringify(data.user));
-        localStorage.setItem('triad_vaults_token', data.token);
-        this.connectSocket(data.token);
-      }
-      return data;
-    } catch (e) {
-      return { success: false, error: 'Error de conexión con el servidor.' };
-    }
+  disconnect() {
+    this.currentRoom = null;
+    this.socket.disconnect();
   }
 
-  async login(identifier, password) {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier, password })
-      });
-      const data = await res.json();
-      if (data.success) {
-        this.authenticatedUser = data.user;
-        localStorage.setItem('triad_vaults_user', JSON.stringify(data.user));
-        localStorage.setItem('triad_vaults_token', data.token);
-        this.connectSocket(data.token);
-      }
-      return data;
-    } catch (e) {
-      return { success: false, error: 'Error de conexión con el servidor.' };
+  // ------------------------------------------------------------ eventos
+
+  /** Registro con deduplicación: llamar dos veces no duplica el handler. */
+  on(event, handler) {
+    if (this.listeners.has(event)) {
+      this.socket.off(event, this.listeners.get(event));
     }
+    this.listeners.set(event, handler);
+    this.socket.on(event, handler);
   }
 
-  async requestReset(email) {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/request-reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      return await res.json();
-    } catch (e) {
-      return { success: false, error: 'Error al solicitar el PIN de recuperación.' };
-    }
+  emit(event, payload, callback) {
+    this.socket.emit(event, payload, callback);
   }
 
-  async resetPassword(email, resetCode, newPassword) {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/reset-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, resetCode, newPassword })
-      });
-      return await res.json();
-    } catch (e) {
-      return { success: false, error: 'Error al restablecer la contraseña.' };
-    }
+  registerCoreEvents() {
+    // El servidor es la fuente de verdad de la sala: se cachea cada actualización.
+    this.socket.on(EVENTS.ROOM_UPDATED, room => {
+      this.currentRoom = room;
+    });
+    this.socket.on(EVENTS.RECONNECTED_TO_ROOM, ({ room, uid }) => {
+      this.currentRoom = room;
+      if (uid) this.uid = String(uid);
+    });
   }
 
-  async getLeaderboard() {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/leaderboard`);
-      return await res.json();
-    } catch (e) {
-      return { success: false, leaderboard: [] };
-    }
+  // ------------------------------------------------------------- estado
+
+  get isConnected() {
+    return this.socket.connected;
   }
 
-  async verifyEmail(username, code) {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, code })
-      });
-      return await res.json();
-    } catch (e) {
-      return { success: false, error: 'Error de conexión con el servidor.' };
-    }
+  get roomCode() {
+    return this.currentRoom ? this.currentRoom.code : null;
   }
 
-  async updateProfile(firstName, lastName, newEmail, newUsername) {
-    try {
-      const token = localStorage.getItem('triad_vaults_token');
-      const res = await fetch(`${this.baseUrl}/api/profile/update`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ firstName, lastName, newEmail, newUsername })
-      });
-      return await res.json();
-    } catch (e) {
-      return { success: false, error: 'Error de conexión con el servidor.' };
-    }
+  /** Jugador local dentro de la sala actual, resuelto por uid en cada consulta. */
+  get localPlayer() {
+    if (!this.currentRoom || !this.uid) return null;
+    return this.currentRoom.players.find(p => String(p.uid) === String(this.uid)) || null;
   }
 
-  createRoom(level = 1, callback) {
-    this.socket.emit('create_room', { level }, (response) => {
-      if (response.success) {
+  /** Autoridad de simulación: sin sala, el jugador en solitario también la tiene. */
+  get isHost() {
+    if (!this.currentRoom) return true;
+    return String(this.currentRoom.hostUid) === String(this.uid);
+  }
+
+  // -------------------------------------------------------------- salas
+
+  createRoom(callback) {
+    this.emit(EVENTS.CREATE_ROOM, {}, response => {
+      if (response && response.success) {
         this.currentRoom = response.room;
-        this.localPlayer = response.room.players[0];
+        this.uid = String(response.uid);
       }
       callback(response);
     });
   }
 
   joinRoom(roomCode, callback) {
-    this.socket.emit('join_room', { roomCode }, (response) => {
-      if (response.success) {
+    this.emit(EVENTS.JOIN_ROOM, { roomCode }, response => {
+      if (response && response.success) {
         this.currentRoom = response.room;
-        this.localPlayer = response.player;
+        this.uid = String(response.uid);
       }
       callback(response);
     });
   }
 
-  startGame() {
-    if (this.currentRoom) {
-      this.socket.emit('start_game', { roomCode: this.currentRoom.code });
-    }
-  }
-
   leaveRoom() {
-    this.socket.emit('leave_room');
+    this.emit(EVENTS.LEAVE_ROOM, {});
     this.currentRoom = null;
-    this.localPlayer = null;
   }
 
-  getPublicRooms(callback) {
-    this.socket.emit('get_public_rooms', callback);
+  fetchRooms(callback) {
+    this.emit(EVENTS.GET_ROOMS, {}, rooms => callback(rooms || []));
   }
 
-  onPublicRoomsUpdated(callback) {
-    this.socket.on('public_rooms_updated', callback);
+  startGame() {
+    if (this.roomCode) this.emit(EVENTS.START_GAME, { roomCode: this.roomCode });
   }
 
-  sendMove(position, rotationY, health = 100) {
-    if (this.currentRoom) {
-      this.socket.emit('player_move', {
-        roomCode: this.currentRoom.code,
-        position,
-        rotationY,
-        health
-      });
-    }
+  // ------------------------------------------------------------ partida
+
+  sendMove(position, rotationY) {
+    if (!this.roomCode || !this.isConnected) return;
+    this.emit(EVENTS.PLAYER_MOVE, { roomCode: this.roomCode, position, rotationY });
   }
 
-  sendGhostMove(position) {
-    if (this.currentRoom && this.localPlayer && this.localPlayer.isHost) {
-      this.socket.emit('ghost_move', {
-        roomCode: this.currentRoom.code,
-        position
-      });
-    }
+  sendGhostState(position, targetUid) {
+    if (!this.roomCode || !this.isHost || !this.isConnected) return;
+    this.emit(EVENTS.GHOST_STATE, {
+      roomCode: this.roomCode,
+      position: { x: position.x, y: position.y, z: position.z },
+      targetUid
+    });
   }
 
-  sendDamage(playerId, health) {
-    if (this.currentRoom) {
-      this.socket.emit('player_damaged', {
-        roomCode: this.currentRoom.code,
-        playerId,
-        health
-      });
-    }
+  sendGhostHit(targetUid, amount) {
+    if (!this.roomCode || !this.isHost) return;
+    this.emit(EVENTS.GHOST_HIT, { roomCode: this.roomCode, targetUid, amount });
   }
 
+  requestRespawn() {
+    if (!this.roomCode) return;
+    this.emit(EVENTS.REQUEST_RESPAWN, { roomCode: this.roomCode });
+  }
+
+  /** Lo señala quien cruza la salida, sea o no el host; el servidor lo procesa una vez. */
   notifyLevelComplete(timeSpent = 0) {
-    if (this.currentRoom && this.localPlayer && this.localPlayer.isHost) {
-      const username = this.authenticatedUser ? this.authenticatedUser.username : this.localPlayer.name;
-      this.socket.emit('level_complete', {
-        roomCode: this.currentRoom.code,
-        username,
-        timeSpent
-      });
-    }
+    if (!this.roomCode) return;
+    this.emit(EVENTS.LEVEL_COMPLETE, { roomCode: this.roomCode, timeSpent });
   }
 
-  onRoomUpdated(callback) {
-    this.socket.on('room_updated', (room) => {
-      this.currentRoom = room;
-      callback(room);
-    });
-  }
-
-  onGameStarted(callback) {
-    this.socket.on('game_started', callback);
-  }
-
-  onReconnectedToRoom(callback) {
-    this.socket.on('reconnected_to_room', callback);
-  }
-
-  onPlayerMoved(callback) {
-    this.socket.on('player_moved', callback);
-  }
-
-  onGhostMoved(callback) {
-    this.socket.on('ghost_moved', callback);
-  }
-
-  onUpdateHealth(callback) {
-    this.socket.on('update_player_health', callback);
-  }
-
-  onNextLevel(callback) {
-    this.socket.on('load_next_level', callback);
-  }
-
-  onUserProgressUpdated(callback) {
-    this.socket.on('user_progress_updated', (data) => {
-      if (this.authenticatedUser) {
-        this.authenticatedUser.maxLevelReached = data.maxLevelReached;
-        this.authenticatedUser.totalPuzzlesSolved = data.totalPuzzlesSolved;
-        localStorage.setItem('triad_vaults_user', JSON.stringify(this.authenticatedUser));
-      }
-      if (callback) callback(data);
-    });
+  requestRegenerate() {
+    if (!this.roomCode || !this.isHost) return;
+    this.emit(EVENTS.REGENERATE_LEVEL, { roomCode: this.roomCode });
   }
 }

@@ -1,58 +1,66 @@
 import * as THREE from 'three';
+import { moveWithSlide, turnTowards } from '../physics/collision.js';
 
-const PLAYER_COLORS = [0x00f3ff, 0xff0077, 0x00ff66]; // Cyan, Pink, Green for players 1, 2, 3
+export const PLAYER_COLORS = [0x00f3ff, 0xff0077, 0x00ff66]; // agente 1, 2, 3
+export const PLAYER_RADIUS = 0.4;
+export const PLAYER_SPEED = 8.5;
+
+/** Suavizado de las posiciones remotas: sin esto los otros agentes se ven a saltos. */
+const REMOTE_LERP = 12;
 
 export class PlayerEntity {
-  constructor(id, name, playerIndex = 0, isLocal = false) {
-    this.id = id;
+  constructor({ uid, name, index = 0, isLocal = false }) {
+    this.uid = uid;
     this.name = name;
-    this.playerIndex = playerIndex;
+    this.index = index;
     this.isLocal = isLocal;
-    this.speed = 8.5;
+    this.speed = PLAYER_SPEED;
+    this.alive = true;
+    this.health = 100;
 
-    this.colorHex = PLAYER_COLORS[playerIndex % PLAYER_COLORS.length];
+    this.colorHex = PLAYER_COLORS[index % PLAYER_COLORS.length];
+    this.targetPosition = new THREE.Vector3();
+    this.targetRotationY = 0;
 
-    // Create 3D Mesh Container
     this.mesh = new THREE.Group();
+    this.buildMesh();
+  }
 
-    // Body (Low-poly Capsule / Cyber Bot)
-    const bodyGeo = new THREE.CylinderGeometry(0.4, 0.3, 1.4, 8);
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x111525,
-      roughness: 0.3,
-      metalness: 0.8
-    });
-    this.bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    this.bodyMesh.position.y = 0.7;
-    this.bodyMesh.castShadow = true;
-    this.bodyMesh.receiveShadow = true;
-    this.mesh.add(this.bodyMesh);
+  buildMesh() {
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.4, 0.3, 1.4, 8),
+      new THREE.MeshStandardMaterial({ color: 0x111525, roughness: 0.3, metalness: 0.8 })
+    );
+    body.position.y = 0.7;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    this.mesh.add(body);
+    this.bodyMesh = body;
 
-    // Head / Visor (Glowing Neon Color)
-    const headGeo = new THREE.BoxGeometry(0.5, 0.4, 0.5);
-    const headMat = new THREE.MeshStandardMaterial({
-      color: this.colorHex,
-      emissive: this.colorHex,
-      emissiveIntensity: 0.8,
-      roughness: 0.2
-    });
-    this.headMesh = new THREE.Mesh(headGeo, headMat);
-    this.headMesh.position.set(0, 1.4, 0.1);
-    this.headMesh.castShadow = true;
-    this.mesh.add(this.headMesh);
+    const head = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.4, 0.5),
+      new THREE.MeshStandardMaterial({
+        color: this.colorHex,
+        emissive: this.colorHex,
+        emissiveIntensity: 0.8,
+        roughness: 0.2
+      })
+    );
+    head.position.set(0, 1.4, 0.1);
+    head.castShadow = true;
+    this.mesh.add(head);
+    this.headMesh = head;
 
-    // Light ring under player
     const ringGeo = new THREE.RingGeometry(0.5, 0.65, 16);
     ringGeo.rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: this.colorHex,
-      side: THREE.DoubleSide
-    });
-    this.ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    this.ringMesh.position.y = 0.02;
-    this.mesh.add(this.ringMesh);
+    const ring = new THREE.Mesh(
+      ringGeo,
+      new THREE.MeshBasicMaterial({ color: this.colorHex, side: THREE.DoubleSide })
+    );
+    ring.position.y = 0.02;
+    this.mesh.add(ring);
+    this.ringMesh = ring;
 
-    // Dynamic Pointlight
     this.light = new THREE.PointLight(this.colorHex, 1.5, 6);
     this.light.position.set(0, 1.5, 0);
     this.mesh.add(this.light);
@@ -60,58 +68,90 @@ export class PlayerEntity {
 
   setPosition(x, y, z) {
     this.mesh.position.set(x, y, z);
+    this.targetPosition.set(x, y, z);
   }
 
   getPosition() {
     return this.mesh.position;
   }
 
-  checkCollisionAt(pos, obstacleBoxes, radius = 0.4) {
-    for (const box of obstacleBoxes) {
-      if (
-        pos.x + radius > box.min.x &&
-        pos.x - radius < box.max.x &&
-        pos.z + radius > box.min.z &&
-        pos.z - radius < box.max.z
-      ) {
-        return true; // Collision detected
-      }
-    }
-    return false;
+  /** Estado de red de un jugador remoto; se interpola en `updateRemote`. */
+  setNetworkTransform(position, rotationY) {
+    this.targetPosition.set(position.x, position.y, position.z);
+    if (typeof rotationY === 'number') this.targetRotationY = rotationY;
   }
 
-  update(delta, moveVector, obstacleBoxes = []) {
-    if (!moveVector || moveVector.lengthSq() === 0) return;
+  setAlive(alive) {
+    this.alive = alive;
+    const opacity = alive ? 1 : 0.25;
+    [this.bodyMesh, this.headMesh, this.ringMesh].forEach(mesh => {
+      if (!mesh) return;
+      mesh.material.transparent = !alive;
+      mesh.material.opacity = opacity;
+    });
+    if (this.light) this.light.intensity = alive ? 1.5 : 0.3;
+  }
 
-    const moveStep = moveVector.clone().multiplyScalar(this.speed * delta);
-    const currentPos = this.mesh.position;
-    
-    // 1. Try full movement (dx, dz)
-    const fullNextPos = currentPos.clone().add(moveStep);
-    
-    if (!this.checkCollisionAt(fullNextPos, obstacleBoxes)) {
-      this.mesh.position.copy(fullNextPos);
-    } else {
-      // 2. Wall Sliding: Try moving X-axis only
-      const xOnlyPos = currentPos.clone().add(new THREE.Vector3(moveStep.x, 0, 0));
-      if (!this.checkCollisionAt(xOnlyPos, obstacleBoxes)) {
-        this.mesh.position.copy(xOnlyPos);
-      } else {
-        // 3. Wall Sliding: Try moving Z-axis only
-        const zOnlyPos = currentPos.clone().add(new THREE.Vector3(0, 0, moveStep.z));
-        if (!this.checkCollisionAt(zOnlyPos, obstacleBoxes)) {
-          this.mesh.position.copy(zOnlyPos);
-        }
+  /**
+   * Escudo de reaparición. El parpadeo es lo que comunica que estos segundos no
+   * cuentan: sin señal visible, no recibir daño se lee como que el juego falla.
+   */
+  setShield(durationMs) {
+    this.shieldUntil = performance.now() + (durationMs || 0);
+  }
+
+  get isShielded() {
+    return this.shieldUntil !== undefined && performance.now() < this.shieldUntil;
+  }
+
+  updateShieldVisual() {
+    if (!this.bodyMesh) return;
+
+    if (!this.isShielded) {
+      if (this.shieldWasOn) {
+        this.setAlive(this.alive); // restaura opacidad y luz al terminar
+        this.shieldWasOn = false;
       }
+      return;
     }
 
-    // Smooth rotation facing move direction with Slerp lerping
-    const targetAngle = Math.atan2(moveVector.x, moveVector.z);
-    
-    let diff = targetAngle - this.mesh.rotation.y;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    
-    this.mesh.rotation.y += diff * Math.min(1.0, delta * 14.0);
+    this.shieldWasOn = true;
+    const blink = 0.45 + Math.abs(Math.sin(performance.now() * 0.012)) * 0.55;
+    [this.bodyMesh, this.headMesh, this.ringMesh].forEach(mesh => {
+      if (!mesh) return;
+      mesh.material.transparent = true;
+      mesh.material.opacity = blink;
+    });
+    if (this.light) this.light.intensity = 1.5 * blink;
+  }
+
+  /** Movimiento del jugador local a partir del input. */
+  update(delta, moveVector, obstacleBoxes = []) {
+    if (!this.alive || !moveVector || moveVector.lengthSq() === 0) return false;
+
+    const step = moveVector.clone().multiplyScalar(this.speed * delta);
+    const moved = moveWithSlide(this.mesh.position, step, obstacleBoxes, PLAYER_RADIUS);
+
+    this.mesh.rotation.y = turnTowards(
+      this.mesh.rotation.y,
+      Math.atan2(moveVector.x, moveVector.z),
+      delta
+    );
+    return moved;
+  }
+
+  /** Interpolación de un jugador remoto hacia su último estado conocido. */
+  updateRemote(delta) {
+    const factor = Math.min(1, delta * REMOTE_LERP);
+    this.mesh.position.lerp(this.targetPosition, factor);
+    this.mesh.rotation.y = turnTowards(this.mesh.rotation.y, this.targetRotationY, delta);
+  }
+
+  dispose(scene) {
+    scene.remove(this.mesh);
+    this.mesh.traverse(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
   }
 }

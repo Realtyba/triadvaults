@@ -5,11 +5,20 @@
   "main": "electron/main.js",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/setup-env.js",
     "dev": "concurrently \"vite\" \"node server/index.js\"",
     "build": "vite build",
     "server": "node server/index.js",
+    "setup:env": "node scripts/setup-env.js",
+    "db:setup": "node scripts/setup-db.js",
+    "db:import-legacy": "node scripts/import-legacy-users.js",
     "migrate": "node migrations/migrate.js",
-    "start": "electron ."
+    "start": "electron .",
+    "validate:levels": "node scripts/validate-levels.js",
+    "validate:puzzles": "node scripts/validate-puzzles.js",
+    "validate:achievements": "node scripts/validate-achievements.js",
+    "validate": "npm run validate:levels && npm run validate:puzzles && npm run validate:achievements",
+    "test:e2e": "node scripts/e2e/run.js"
   },
   "dependencies": {
     "cors": "^2.8.6",
@@ -25,6 +34,7 @@
   "devDependencies": {
     "concurrently": "^10.0.4",
     "electron": "^31.2.0",
+    "electron-builder": "26.15.3",
     "vite": "^5.3.4"
   }
 }

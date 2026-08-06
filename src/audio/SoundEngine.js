@@ -53,12 +53,16 @@ export class SoundEngine {
       this.bgmOscillators = [];
 
       const currentChord = chords[chordIndex];
-      
+
       const filter = this.audioCtx.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.setValueAtTime(400, this.audioCtx.currentTime);
       filter.frequency.linearRampToValueAtTime(1200, this.audioCtx.currentTime + 2);
       filter.connect(this.bgmGainNode);
+
+      // El filtro del acorde en curso queda accesible para `setTension`: es el que
+      // se abre cuando el fantasma se acerca.
+      this.bgmFilter = filter;
 
       currentChord.forEach(freq => {
         const osc = this.audioCtx.createOscillator();
@@ -76,8 +80,38 @@ export class SoundEngine {
     playChord();
   }
 
+  /**
+   * Tensión de la música según lo cerca que esté el fantasma.
+   *
+   * Antes el acompañamiento era el mismo ciclo de acordes pasara lo que pasara, y
+   * la única pista de que te estaban alcanzando era mirar a la pantalla. Con el
+   * filtro abriéndose y el volumen subiendo, la amenaza se oye llegar.
+   *
+   * @param {number} tension de 0 (lejos) a 1 (encima)
+   */
+  setTension(tension) {
+    if (this.isMuted || !this.isPlayingBGM) return;
+
+    const clamped = Math.max(0, Math.min(1, tension || 0));
+    const now = this.audioCtx.currentTime;
+
+    // `setTargetAtTime` en vez de asignación directa: un salto de filtro se oye
+    // como un chasquido.
+    if (this.bgmFilter) {
+      this.bgmFilter.frequency.setTargetAtTime(700 + clamped * 2600, now, 0.35);
+    }
+    this.bgmGainNode.gain.setTargetAtTime(0.15 + clamped * 0.12, now, 0.4);
+  }
+
+  /** Ahoga la música al pausar, sin cortarla. */
+  setMuffled(muffled) {
+    if (!this.bgmFilter || this.isMuted) return;
+    this.bgmFilter.frequency.setTargetAtTime(muffled ? 220 : 1200, this.audioCtx.currentTime, 0.15);
+  }
+
   stopBGM() {
     this.isPlayingBGM = false;
+    this.bgmFilter = null;
     clearTimeout(this.bgmTimeout);
     this.bgmGainNode.gain.setTargetAtTime(0, this.audioCtx.currentTime, 0.5);
     setTimeout(() => {

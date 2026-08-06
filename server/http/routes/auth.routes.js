@@ -1,9 +1,23 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { DatabaseManager } from '../../db/index.js';
 import { sendVerificationPin, devPinEchoEnabled } from '../../mailer.js';
 import { signUserToken, authenticateHTTP } from '../middleware/auth.js';
 
 export const authRouter = Router();
+
+// Limiters to prevent brute force attacks
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit each IP to 10 login requests per `window` (here, per 15 minutes)
+  message: { success: false, error: 'Demasiados intentos de inicio de sesión, por favor intenta más tarde.' }
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // Limit each IP to 10 register requests per hour
+  message: { success: false, error: 'Demasiadas cuentas creadas desde esta IP, por favor intenta más tarde.' }
+});
 
 /** Espera mínima entre reenvíos de PIN, por cuenta. */
 const RESEND_COOLDOWN_MS = 60_000;
@@ -22,16 +36,21 @@ const lastResendAt = new Map();
  */
 async function deliverPin(payload, { email, code, username }) {
   const sent = await sendVerificationPin(email, code, username);
-  if (!sent && devPinEchoEnabled()) {
-    payload.devCode = code;
+  if (!sent) {
+    console.warn(`[MAILER] No se pudo enviar el correo de verificación a ${email}.`);
   }
   return payload;
 }
 
-authRouter.post('/register', async (req, res) => {
+authRouter.post('/register', registerLimiter, async (req, res) => {
   const { firstName, lastName, username, email, password } = req.body;
   if (!username || !email || !password) {
     return res.status(400).json({ success: false, error: 'Ingresa Usuario, Correo y Contraseña.' });
+  }
+
+  // Security: validate password length
+  if (password.length < 6) {
+    return res.status(400).json({ success: false, error: 'La contraseña debe tener al menos 6 caracteres.' });
   }
 
   const result = await DatabaseManager.registerUser(firstName, lastName, username, email, password);
@@ -49,7 +68,7 @@ authRouter.post('/register', async (req, res) => {
   res.json(result);
 });
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', loginLimiter, async (req, res) => {
   const { identifier, password } = req.body;
   if (!identifier || !password) {
     return res.status(400).json({ success: false, error: 'Ingresa tu Usuario o Correo y Contraseña.' });
@@ -99,7 +118,11 @@ authRouter.post('/request-reset', async (req, res) => {
   if (!email) {
     return res.status(400).json({ success: false, error: 'Ingresa un correo electrónico.' });
   }
-  res.json(await DatabaseManager.requestPasswordReset(email));
+  const result = await DatabaseManager.requestPasswordReset(email);
+  if (result.success) {
+    delete result.resetCode; // El código se envía por correo, nunca se devuelve en la API.
+  }
+  res.json(result);
 });
 
 authRouter.post('/reset-password', async (req, res) => {

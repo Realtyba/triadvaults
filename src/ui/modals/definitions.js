@@ -96,9 +96,6 @@ export const MODALS = {
       className: 'modal--sm',
       body: `
         <p class="modal__desc">${t('verify_desc')}</p>
-        ${state.verifyDevCode
-          ? `<p class="dev-pin">${t('verify_dev_code')} <strong>${esc(state.verifyDevCode)}</strong></p>`
-          : ''}
         <form data-action="profile:verify" data-submit>
           <input type="text" class="pin-input" data-field="verifyPin" maxlength="6" inputmode="numeric"
                  placeholder="${t('placeholder_pin')}" value="${esc(form.get('verifyPin'))}">

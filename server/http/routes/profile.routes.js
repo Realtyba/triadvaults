@@ -33,7 +33,9 @@ profileRouter.post('/update', authenticateHTTP, async (req, res) => {
     // Si el envío falla, el correo nuevo quedaría sin poder verificarse nunca.
     // Ver `deliverPin` en auth.routes.js.
     const sent = await sendVerificationPin(newEmail, result.newCode, result.username);
-    if (!sent && devPinEchoEnabled()) result.devCode = result.newCode;
+    if (!sent) {
+      console.warn(`[MAILER] No se pudo enviar el correo de verificación a ${newEmail}.`);
+    }
   }
   delete result.newCode;
 

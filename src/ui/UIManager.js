@@ -212,6 +212,7 @@ export class UIManager {
       'auth:logout': () => this.auth.logout(),
       'auth:request-pin': () => this.auth.requestPin(),
       'auth:reset-password': () => this.auth.resetPassword(),
+      'auth:open-verify': () => this.auth.openVerifyModal(),
 
       'profile:edit': () => this.auth.openProfileEditor(),
       'profile:save': () => this.auth.saveProfile(),

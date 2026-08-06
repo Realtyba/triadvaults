@@ -39,6 +39,7 @@ export class ProfileView extends View {
         </dl>
 
         <div class="profile-card__actions">
+          ${user.isVerified ? `<span class="badge badge--success">${this.t('status_verified')}</span>` : `<button class="btn btn-sm btn-outline" data-action="auth:open-verify">${this.t('btn_verify')}</button>`}
           <button class="btn btn-sm btn-outline" data-action="profile:edit">${this.t('btn_edit')}</button>
           <button class="btn btn-sm" data-action="auth:logout">${this.t('btn_logout')}</button>
         </div>

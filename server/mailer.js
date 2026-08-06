@@ -17,7 +17,7 @@ function getTransporter() {
     transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: false, // true para 465, false para el resto de puertos
+      secure: process.env.MAIL_ENCRYPTION === 'ssl' || process.env.SMTP_PORT === '465',
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS

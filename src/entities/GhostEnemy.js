@@ -126,8 +126,8 @@ export class GhostEnemyEntity {
   }
 
   /**
-   * Avanza hacia el objetivo respetando los muros. Si el camino directo está
-   * bloqueado, prueba desvíos crecientes en vez de atravesar la geometría.
+   * Avanza hacia el objetivo directamente.
+   * El fantasma traspasa los muros y obstáculos geométricos.
    */
   moveTowards(targetPosition, delta, obstacleBoxes) {
     const direction = new THREE.Vector3(
@@ -141,14 +141,9 @@ export class GhostEnemyEntity {
     const distance = this.speed * delta;
     const baseAngle = Math.atan2(direction.x, direction.z);
 
-    for (const offset of DETOUR_ANGLES) {
-      const angle = baseAngle + offset;
-      const step = new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle)).multiplyScalar(distance);
-      if (moveWithSlide(this.mesh.position, step, obstacleBoxes, GHOST_RADIUS)) {
-        this.mesh.rotation.y = angle;
-        return;
-      }
-    }
+    const step = direction.multiplyScalar(distance);
+    this.mesh.position.add(step);
+    this.mesh.rotation.y = baseAngle;
   }
 
   destroy() {

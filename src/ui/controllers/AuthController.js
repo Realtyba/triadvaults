@@ -186,6 +186,15 @@ export class AuthController {
     }, 1000);
   }
 
+  openVerifyModal() {
+    this.store.patch({
+      modal: 'verify',
+      verifyMessage: '',
+      verifyDevCode: null,
+      resendCooldown: 0
+    });
+  }
+
   openProfileEditor() {
     const user = this.store.get().user;
     if (!user) return;

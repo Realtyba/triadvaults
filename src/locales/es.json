@@ -129,6 +129,7 @@
   "status_connecting": "Conectando con el Servidor Central...",
   "status_requesting_pin": "Solicitando PIN...",
   "status_updating_password": "Actualizando contraseña...",
+  "status_verified": "VERIFICADO",
   "status_verifying": "Verificando...",
   "status_saving": "Guardando...",
   "error_pin_length": "Introduce el PIN de 6 dígitos.",

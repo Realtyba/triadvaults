@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    container_name: triad-vaults
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,4 +1,5 @@
 import { esc, setText, setWidth, toggleClass } from '../dom.js';
+import { icon } from '../icons.js';
 
 /**
  * HUD de partida.
@@ -18,6 +19,8 @@ export class HudView {
     'objectiveText',
     'puzzleProgress',
     'puzzleSolved',
+    'elapsedTime',
+    'hasGamepad',
     'lang'
   ];
 
@@ -59,6 +62,15 @@ export class HudView {
         <div class="bar"><div class="bar__fill bar__fill--progress" data-ref="progressFill"></div></div>
         <div class="hud-objective__hint">${this.t('camera_hint')}</div>
       </div>
+
+      <div class="hud-timer glass-panel">
+        <span class="hud-timer__label">${this.t('hud_timer')}</span>
+        <span class="hud-timer__value" data-ref="timer">00:00</span>
+        <div class="hud-input-mode" data-ref="inputMode">
+          ${icon('keyboard', { size: 14 })}
+          <span data-ref="inputLabel">${this.t('hud_input_keyboard')}</span>
+        </div>
+      </div>
     `;
 
     const ref = name => this.root.querySelector(`[data-ref="${name}"]`);
@@ -73,7 +85,10 @@ export class HudView {
       healthGhost: ref('healthGhost'),
       healthPanel: ref('healthPanel'),
       objective: ref('objective'),
-      progressFill: ref('progressFill')
+      progressFill: ref('progressFill'),
+      timer: ref('timer'),
+      inputMode: ref('inputMode'),
+      inputLabel: ref('inputLabel')
     };
     this.lang = this.ctx.lang;
   }
@@ -90,11 +105,32 @@ export class HudView {
     toggleClass(this.refs.status, 'is-done', state.puzzleSolved);
 
     this.renderHealth(state.health);
+    this.renderTimer(state.elapsedTime || 0);
+    this.renderInputMode(state.hasGamepad);
 
     if (this.refs.objective.textContent !== state.objectiveText) {
       this.refs.objective.innerHTML = esc(state.objectiveText);
     }
     setWidth(this.refs.progressFill, state.puzzleProgress);
+  }
+
+  /** Formatea segundos como MM:SS. */
+  renderTimer(seconds) {
+    const total = Math.max(0, Math.floor(seconds));
+    const m = String(Math.floor(total / 60)).padStart(2, '0');
+    const s = String(total % 60).padStart(2, '0');
+    setText(this.refs.timer, `${m}:${s}`);
+  }
+
+  renderInputMode(hasGamepad) {
+    if (!this.refs.inputMode) return;
+    const iconName = hasGamepad ? 'gamepad' : 'keyboard';
+    const label = this.t(hasGamepad ? 'hud_input_gamepad' : 'hud_input_keyboard');
+    // Solo reescribe si cambió, para no animar el icono en cada frame.
+    if (this.refs.inputLabel.textContent !== label) {
+      this.refs.inputMode.innerHTML = `${icon(iconName, { size: 14 })}<span data-ref="inputLabel">${label}</span>`;
+      this.refs.inputLabel = this.refs.inputMode.querySelector('[data-ref="inputLabel"]');
+    }
   }
 
   /**

@@ -40,6 +40,7 @@ export class GameApp {
     this.lastPuzzleSolved = false;
     this.moveAccumulator = 0;
     this.ghostAccumulator = 0;
+    this.hudAccumulator = 0;
 
     this.ambient = new AmbientScene({
       scene: this.renderer.scene,
@@ -263,6 +264,19 @@ export class GameApp {
     this.updateGhost(delta, snapshot);
     this.updatePuzzle(snapshot, local, delta);
     this.updateTension(delta, local);
+    this.throttledHudUpdate(delta);
+  }
+
+  /** Timer y modo de entrada se actualizan a ~2 Hz: no merece la pena más rápido. */
+  throttledHudUpdate(delta) {
+    this.hudAccumulator += delta;
+    if (this.hudAccumulator < 0.5) return;
+    this.hudAccumulator = 0;
+
+    this.ui.store.patch({
+      elapsedTime: this.level.elapsedSeconds,
+      hasGamepad: this.input.hasGamepad
+    });
   }
 
   /** Distancia a la que el fantasma empieza a notarse en la música. */

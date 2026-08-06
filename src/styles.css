@@ -1671,3 +1671,384 @@ label {
     transform: scale(0.88);
   }
 }
+
+/* ================================================
+   11. POLISH — toques premium únicos
+   ================================================ */
+
+/* ------- CRT scan-line overlay (sutil, solo cosmético) -------
+   Dos capas: líneas finas cada 3 px y un reflujo vertical lento que simula
+   el barrido de un monitor de vigilancia. Se aplica sobre toda la UI. */
+#ui-layer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 99999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.04) 2px,
+    rgba(0, 0, 0, 0.04) 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+#ui-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 99998;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 243, 255, 0.018) 50%,
+    transparent 100%
+  );
+  background-size: 100% 220%;
+  animation: crt-sweep 6s linear infinite;
+}
+
+@keyframes crt-sweep {
+  from { background-position: 0 -100%; }
+  to   { background-position: 0 200%; }
+}
+
+/* ------- Typing cursor parpadeante en el subtítulo ------- */
+.subtitle::after {
+  content: '_';
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--accent);
+  animation: blink-cursor 0.72s steps(2) infinite;
+}
+
+@keyframes blink-cursor {
+  50% { opacity: 0; }
+}
+
+/* ------- Glassmorphism reforzado: borde con gradiente animado -------
+   Se superpone un gradiente cónico girando lento sobre el borde del panel. */
+.menu-shell {
+  position: relative;
+  overflow: hidden;
+}
+
+.menu-shell::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--border-angle, 0deg),
+    transparent 25%,
+    var(--accent) 50%,
+    transparent 75%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: rotate-border 8s linear infinite;
+}
+
+@property --border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes rotate-border {
+  to { --border-angle: 360deg; }
+}
+
+/* ------- Holographic hover en player cards del lobby ------- */
+.player-card:not(.player-card--empty) {
+  transition: transform var(--dur) var(--ease-spring),
+    box-shadow var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
+}
+
+.player-card:not(.player-card--empty):hover {
+  transform: translateY(-4px) scale(1.02);
+  border-color: var(--accent);
+  box-shadow:
+    0 0 20px var(--accent-soft),
+    inset 0 0 30px rgba(0, 243, 255, 0.04);
+}
+
+/* Reflejo diagonal holográfico */
+.player-card:not(.player-card--empty)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    transparent 30%,
+    rgba(0, 243, 255, 0.06) 45%,
+    rgba(157, 0, 255, 0.06) 55%,
+    transparent 70%
+  );
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease-out);
+  pointer-events: none;
+}
+
+.player-card:not(.player-card--empty):hover::after {
+  opacity: 1;
+}
+
+.player-card {
+  position: relative;
+  overflow: hidden;
+}
+
+/* ------- Progress bar shimmer ------- */
+.bar__fill--progress {
+  position: relative;
+  overflow: hidden;
+}
+
+.bar__fill--progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 100%
+  );
+  animation: shimmer 2s var(--ease-out) infinite;
+}
+
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(200%); }
+}
+
+/* ------- Neon flicker en badges desbloqueados ------- */
+.badge.is-unlocked {
+  animation: neon-flicker 4s ease-in-out infinite;
+}
+
+@keyframes neon-flicker {
+  0%, 92%, 100% {
+    box-shadow: 0 0 16px rgba(255, 170, 0, 0.18);
+  }
+  93% {
+    box-shadow: 0 0 4px rgba(255, 170, 0, 0.06);
+  }
+  95% {
+    box-shadow: 0 0 22px rgba(255, 170, 0, 0.3);
+  }
+  96% {
+    box-shadow: 0 0 8px rgba(255, 170, 0, 0.08);
+  }
+}
+
+/* ------- Glow suave en key-slot hover (controles) ------- */
+.key-slot:hover {
+  box-shadow: 0 0 14px var(--accent-soft), inset 0 0 8px rgba(0, 243, 255, 0.06);
+}
+
+.key-slot.is-capturing {
+  box-shadow: 0 0 20px var(--accent-soft);
+}
+
+/* ------- Room card hover glow ------- */
+.room-card {
+  transition: transform var(--dur) var(--ease-spring),
+    box-shadow var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
+}
+
+.room-card:hover {
+  transform: translateX(4px);
+  box-shadow: 0 0 16px rgba(0, 243, 255, 0.1);
+}
+
+/* ------- HUD timer y indicador de input ------- */
+.hud-timer {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-timer__value {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.hud-timer__label {
+  font-size: 0.56rem;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.hud-input-mode {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.hud-input-mode .icon {
+  color: var(--accent);
+}
+
+/* ------- Indicador de estado del servidor ------- */
+.server-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.server-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--neon-green);
+  box-shadow: 0 0 8px rgba(0, 255, 102, 0.6);
+  animation: dot-pulse 2s ease-in-out infinite;
+}
+
+.server-dot.is-offline {
+  background: var(--neon-red);
+  box-shadow: 0 0 8px rgba(255, 0, 51, 0.6);
+  animation: none;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+/* ------- Versión del juego en el footer ------- */
+.version-label {
+  display: block;
+  margin-top: 6px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.56rem;
+  letter-spacing: 0.2em;
+  color: var(--text-faint);
+}
+
+/* ------- Cards de instrucciones ------- */
+.inst-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+@media (max-width: 540px) {
+  .inst-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.inst-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out);
+}
+
+.inst-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 14px var(--accent-soft);
+}
+
+.inst-card__icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.inst-card__title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+.inst-card__desc {
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* La card del fantasma abarca las dos columnas (es la más importante). */
+.inst-card--full {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  border-color: rgba(255, 0, 51, 0.25);
+}
+
+.inst-card--full .inst-card__icon {
+  background: rgba(255, 0, 51, 0.14);
+  color: var(--neon-red);
+}
+
+.inst-card--full:hover {
+  border-color: var(--neon-red);
+  box-shadow: 0 0 14px rgba(255, 0, 51, 0.14);
+}
+
+/* ------- Créditos en instrucciones ------- */
+.credits-section {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+  text-align: center;
+}
+
+.credits-section__label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.credits-section__text {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}

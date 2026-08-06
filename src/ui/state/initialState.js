@@ -52,6 +52,8 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     objectiveText: '',
     puzzleProgress: 0,
     puzzleSolved: false,
+    elapsedTime: 0,
+    hasGamepad: false,
     paused: false,
     canRegenerate: false,
     alertMessage: ''

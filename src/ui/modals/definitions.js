@@ -203,13 +203,39 @@ export const MODALS = {
     title: t('instructions_title'),
     className: 'modal--doc',
     body: `
-      <ul class="modal__list">
-        <li>${t('inst_movement')}</li>
-        <li>${t('inst_camera')}</li>
-        <li>${t('inst_objective')}</li>
-        <li>${t('inst_door')}</li>
-        <li>${t('inst_ghost')}</li>
-      </ul>
+      <div class="inst-grid">
+        <div class="inst-card">
+          <div class="inst-card__icon">${icon('bolt', { size: 20 })}</div>
+          <div class="inst-card__title">${t('inst_title_movement')}</div>
+          <div class="inst-card__desc">${t('inst_desc_movement')}</div>
+        </div>
+        <div class="inst-card">
+          <div class="inst-card__icon">${icon('hint', { size: 20 })}</div>
+          <div class="inst-card__title">${t('inst_title_camera')}</div>
+          <div class="inst-card__desc">${t('inst_desc_camera')}</div>
+        </div>
+        <div class="inst-card">
+          <div class="inst-card__icon">${icon('puzzle', { size: 20 })}</div>
+          <div class="inst-card__title">${t('inst_title_objective')}</div>
+          <div class="inst-card__desc">${t('inst_desc_objective')}</div>
+        </div>
+        <div class="inst-card">
+          <div class="inst-card__icon">${icon('zap', { size: 20 })}</div>
+          <div class="inst-card__title">${t('inst_title_exit')}</div>
+          <div class="inst-card__desc">${t('inst_desc_exit')}</div>
+        </div>
+        <div class="inst-card inst-card--full">
+          <div class="inst-card__icon">${icon('ghost', { size: 20 })}</div>
+          <div>
+            <div class="inst-card__title">${t('inst_title_ghost')}</div>
+            <div class="inst-card__desc">${t('inst_desc_ghost')}</div>
+          </div>
+        </div>
+      </div>
+      <div class="credits-section">
+        <div class="credits-section__label">${t('credits_label')}</div>
+        <div class="credits-section__text">${t('credits_text')}</div>
+      </div>
       <button class="btn btn-secondary" data-action="modal:close">${t('btn_close')}</button>
     `
   })

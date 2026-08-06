@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.env.example
+docs
+electron
+scripts/e2e
+pnpm-lock.yaml
+pnpm-workspace.yaml
+*.md

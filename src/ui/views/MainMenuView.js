@@ -16,6 +16,7 @@ export class MainMenuView {
     ...new Set([
       'user',
       'lang',
+      'connection',
       ...AuthView.keys,
       ...ProfileView.keys,
       ...RoomBrowserView.keys,
@@ -40,6 +41,10 @@ export class MainMenuView {
         <div class="brand">
           <h1 class="glitch-title">${this.t('title')}</h1>
           <p class="subtitle">${esc(this.t('subtitle'))}</p>
+          <span class="server-status" data-region="server-status">
+            <span class="server-dot"></span>
+            <span>${this.t('server_online')}</span>
+          </span>
         </div>
         <div data-region="profile"></div>
         <div data-region="auth"></div>
@@ -53,6 +58,7 @@ export class MainMenuView {
             <button class="link-btn" data-action="modal:open" data-modal="tos">${icon('doc')}<span>${this.t('btn_show_tos')}</span></button>
             <button class="link-btn" data-action="modal:open" data-modal="instructions">${icon('help')}<span>${this.t('btn_show_instructions')}</span></button>
           </div>
+          <span class="version-label">${this.t('game_version')}</span>
         </footer>
       </div>
     `;
@@ -83,6 +89,16 @@ export class MainMenuView {
     this.regions.auth.classList.toggle('hidden', authenticated);
     this.regions.profile.classList.toggle('hidden', !authenticated);
     this.regions.columns.classList.toggle('hidden', !authenticated);
+
+    // Indicador de servidor: pasa a rojo si no hay enlace.
+    const statusEl = this.root.querySelector('[data-region="server-status"]');
+    if (statusEl) {
+      const offline = state.connection !== 'online';
+      const dot = statusEl.querySelector('.server-dot');
+      if (dot) dot.classList.toggle('is-offline', offline);
+      const label = statusEl.lastElementChild;
+      if (label) label.textContent = this.t(offline ? 'server_offline' : 'server_online');
+    }
 
     this.children.forEach(child => {
       const keys = child.constructor.keys;

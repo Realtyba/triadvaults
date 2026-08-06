@@ -20,19 +20,20 @@ RUN pnpm install --frozen-lockfile --prod
 # El build del cliente
 COPY --from=build /app/dist ./dist
 
-# El servidor y archivos compartidos
+# El servidor y archivos compartidos.
+#
+# Ya no se copian `migrations` ni `src/locales`: el esquema vive en realtyba-api
+# (database/migrations/TriadVaults) y las plantillas de correo también, porque el
+# envío pasó al servicio central.
 COPY server ./server
 COPY shared ./shared
-COPY migrations ./migrations
 COPY scripts ./scripts
-
-# server/mailer.js lee las plantillas de email localizadas de aquí
-COPY src/locales ./src/locales
 
 EXPOSE 3001
 
-# Healthcheck interno
+# Healthcheck interno. La ruta es /health y no /api/health: el prefijo /api de
+# este servidor desapareció con las rutas de cuentas.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:3001/api/health || exit 1
+  CMD wget -qO- http://localhost:3001/health || exit 1
 
 CMD ["node", "server/index.js"]

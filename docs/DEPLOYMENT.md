@@ -2,7 +2,8 @@
 
 Guía paso a paso para montar Triad Vaults en un VPS con Ubuntu. La aplicación
 corre dentro de un contenedor Docker, aislada del resto de servicios del servidor.
-La base de datos PostgreSQL es central (compartida con otros proyectos del VPS).
+Este servidor solo coordina salas: las cuentas, el progreso y los logros los sirve
+`realtyba-api`, que es quien habla con PostgreSQL.
 
 ---
 
@@ -12,7 +13,7 @@ La base de datos PostgreSQL es central (compartida con otros proyectos del VPS).
 2. [Preparar el subdominio](#2-preparar-el-subdominio)
 3. [Clonar el proyecto](#3-clonar-el-proyecto)
 4. [Configurar `.env` de producción](#4-configurar-env-de-producción)
-5. [Crear la base de datos](#5-crear-la-base-de-datos)
+5. [Base de datos](#5-base-de-datos)
 6. [Dockerfile y docker-compose](#6-dockerfile-y-docker-compose)
 7. [Construir y levantar el contenedor](#7-construir-y-levantar-el-contenedor)
 8. [Configurar Nginx como reverse proxy](#8-configurar-nginx-como-reverse-proxy)
@@ -34,7 +35,7 @@ En el VPS (Ubuntu 22.04 o 24.04):
 | Docker + Docker Compose | 24+ | `sudo apt install docker.io docker-compose-v2` |
 | Nginx | cualquiera | `sudo apt install nginx` |
 | Certbot | cualquiera | `sudo apt install certbot python3-certbot-nginx` |
-| PostgreSQL | 15+ | Ya instalado (central) |
+| PostgreSQL | 15+ | Ya instalado (central). Lo usa `realtyba-api`, no este servidor |
 | Git | cualquiera | `sudo apt install git` |
 
 > **Nota:** Si Docker no está instalado, sigue la [guía oficial](https://docs.docker.com/engine/install/ubuntu/).
@@ -95,91 +96,70 @@ nano .env
 Contenido recomendado para producción:
 
 ```env
-# --- Servidor ---
+# --- Servidor de salas ---
 PORT=3001
 NODE_ENV=production
 
-# Clave JWT: genera una aleatoria y larga
-JWT_SECRET=$(openssl rand -hex 64)
+# --- Integración con realtyba-api ---
+# Este servidor ya no tiene base de datos ni SMTP: las cuentas, el progreso, los
+# logros y el correo viven en realtyba-api.
+TRIADVAULTS_API_URL=https://api.tudominio.com
+
+# Los DOS son secretos COMPARTIDOS: tienen que valer exactamente lo mismo que en
+# el .env de realtyba-api. No los generes aquí por tu cuenta.
+TRIADVAULTS_INTERNAL_SECRET=el_mismo_valor_que_en_realtyba-api
+TRIADVAULTS_JWT_SECRET=el_mismo_valor_que_en_realtyba-api
 
 # --- Cliente (Vite) ---
-# Apuntar al subdominio con HTTPS
-VITE_API_URL=https://game.tudominio.com
-
-# --- PostgreSQL (la central del VPS) ---
-DB_HOST=host.docker.internal
-DB_PORT=5432
-DB_USERNAME=postgres
-DB_PASSWORD=tu_password_de_postgres
-DB_DATABASE=triadvaults
-
-# Obligatorio en producción: si Postgres no responde, no arrancar
-DB_REQUIRED=true
-
-# --- Correo (Zoho) ---
-SMTP_HOST=smtp.zoho.com
-SMTP_PORT=587
-SMTP_USER=tu_correo@tudominio.com
-SMTP_PASS=tu_contraseña_de_aplicacion_zoho
-SMTP_FROM="Triad Vaults" <tu_correo@tudominio.com>
-
-# En producción, el PIN NUNCA viaja en la respuesta
-AUTH_DEV_ECHO_PIN=false
+# Solo el socket, que es lo único que sirve este proceso. La URL de la API no se
+# repite aquí: el cliente la recibe de TRIADVAULTS_API_URL, horneada al construir.
+VITE_SOCKET_URL=https://game.tudominio.com
 ```
 
-> **Importante:** `DB_HOST=host.docker.internal` permite que el contenedor Docker
-> se conecte al PostgreSQL del host. En Ubuntu puede requerir configuración extra
-> (ver [sección de troubleshooting](#14-troubleshooting)).
+> **Si `TRIADVAULTS_JWT_SECRET` no coincide con el de la API**, el fallo es de los
+> engañosos: el registro y el inicio de sesión funcionan con normalidad —los sirve
+> Laravel— y en cambio *todas* las conexiones de socket se rechazan con «token
+> inválido». Si ves ese cuadro, compara los dos ficheros antes que ninguna otra cosa.
 
-Para generar el `JWT_SECRET` de una sola vez:
+> Sin `TRIADVAULTS_JWT_SECRET`, este servidor **se niega a arrancar**. Es a
+> propósito: antes avisaba y seguía con una clave de desarrollo conocida.
+
+Para generar el par de secretos la primera vez (y copiarlos a los dos `.env`):
 
 ```bash
-sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$(openssl rand -hex 64)/" .env
+openssl rand -hex 32   # TRIADVAULTS_JWT_SECRET
+openssl rand -hex 32   # TRIADVAULTS_INTERNAL_SECRET
 ```
 
 ---
 
-## 5. Crear la base de datos
+## 5. Base de datos
 
-Desde el host (no desde Docker), crea la base de datos y aplica las migraciones:
+**No hay ninguna que crear aquí.** El esquema del juego vive en `realtyba-api`, en la
+conexión `triadvaults`, y su `docker-entrypoint.sh` aplica las migraciones y siembra el
+catálogo de logros en cada arranque.
 
-```bash
-# Crear la base de datos
-sudo -u postgres psql -c "CREATE DATABASE triadvaults;"
-
-# Aplicar migraciones (necesitas Node.js en el host, o hazlo desde Docker después)
-# Opción A: si tienes Node.js en el host
-cd /opt/apps/triad-vaults
-npm install --production
-node migrations/migrate.js
-
-# Opción B: desde Docker (tras construir la imagen, paso 7)
-# docker compose exec app node migrations/migrate.js
-```
-
-Verifica que PostgreSQL acepta conexiones desde Docker. Edita `pg_hba.conf`:
+Si despliegas la API por tu cuenta:
 
 ```bash
-sudo nano /etc/postgresql/*/main/pg_hba.conf
+# Desde realtyba-api
+php artisan migrate --database=triadvaults --path="database/migrations/TriadVaults" --force
+php artisan db:seed --database=triadvaults \
+  --class="Database\Seeders\TriadVaults\AchievementCatalogSeeder" --force
 ```
 
-Añade esta línea (permite conexiones desde la red de Docker):
-
-```
-host    triadvaults    postgres    172.16.0.0/12    md5
-```
-
-Y en `postgresql.conf`, asegúrate de que escucha en todas las interfaces:
-
-```
-listen_addresses = '*'
-```
-
-Reinicia PostgreSQL:
+Y para que el módulo de administración aparezca en el panel, en cada tenant que deba
+tenerlo:
 
 ```bash
-sudo systemctl restart postgresql
+php artisan db:seed --class="Database\Seeders\Generic\Basic\ModulesTableSeeder"
+php artisan db:seed --class="Database\Seeders\Generic\Basic\ModuleControllersTableSeeder"
+php artisan db:seed --class="Database\Seeders\Generic\Basic\RoleModuleTableSeeder"
 ```
+
+Los tres son idempotentes y resuelven los módulos del juego **por nombre**, no por id
+fijo: los ids ya divergieron entre tenants, y con ids fijos el `insertOrIgnore` chocaría
+con filas existentes y saltaría las nuevas en silencio.
 
 ---
 
@@ -220,7 +200,7 @@ EXPOSE 3001
 
 # Healthcheck interno
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:3001/api/health || exit 1
+  CMD wget -qO- http://localhost:3001/health || exit 1
 
 CMD ["node", "server/index.js"]
 DOCKERFILE
@@ -278,9 +258,6 @@ cd /opt/apps/triad-vaults
 # Construir la imagen
 docker compose build
 
-# Aplicar migraciones (si no lo hiciste en el paso 5)
-docker compose run --rm app node migrations/migrate.js
-
 # Levantar el contenedor en segundo plano
 docker compose up -d
 
@@ -292,15 +269,17 @@ docker compose logs -f --tail 50
 Deberías ver:
 
 ```
-⚡ Triad Vaults — servidor multijugador en http://localhost:3001
-✅ PostgreSQL conectado
+⚡ Triad Vaults — servidor de salas en http://localhost:3001
 ```
+
+Si además aparece un aviso sobre `TRIADVAULTS_API_URL` o `TRIADVAULTS_INTERNAL_SECRET`,
+se podrá jugar pero **nada se guardará**. Corrígelo antes de abrir al público.
 
 Comprueba el health check:
 
 ```bash
-curl http://localhost:3001/api/health
-# {"success":true,"uptime":...,"storage":"postgres"}
+curl http://localhost:3001/health
+# {"success":true,"service":"triadvaults-rooms","uptime":...,"api":true}
 ```
 
 ---
@@ -404,10 +383,10 @@ sudo certbot renew --dry-run
 
 ```bash
 # Health check por HTTPS
-curl https://game.tudominio.com/api/health
+curl https://game.tudominio.com/health
 
 # Debería devolver:
-# {"success":true,"uptime":...,"storage":"postgres"}
+# {"success":true,"service":"triadvaults-rooms","uptime":...,"api":true}
 ```
 
 Abre `https://game.tudominio.com` en el navegador. Deberías ver el menú principal
@@ -483,15 +462,12 @@ git pull origin main
 # Reconstruir la imagen (incluye el nuevo build de Vite)
 docker compose build
 
-# Aplicar migraciones nuevas (si las hay)
-docker compose run --rm app node migrations/migrate.js
-
 # Reemplazar el contenedor con la imagen nueva (0-downtime con --force-recreate)
 docker compose up -d --force-recreate
 
 # Verificar
 docker compose logs -f --tail 20 app
-curl https://game.tudominio.com/api/health
+curl https://game.tudominio.com/health
 ```
 
 ### Script de despliegue rápido
@@ -510,14 +486,13 @@ echo "🐳 Building Docker image..."
 docker compose build
 
 echo "🗃️  Running migrations..."
-docker compose run --rm app node migrations/migrate.js
 
 echo "🚀 Deploying..."
 docker compose up -d --force-recreate
 
 echo "⏳ Waiting for health check..."
 sleep 5
-curl -sf https://game.tudominio.com/api/health && echo " ✅ Deployed!" || echo " ❌ Health check failed"
+curl -sf https://game.tudominio.com/health && echo " ✅ Deployed!" || echo " ❌ Health check failed"
 DEPLOY
 
 chmod +x deploy.sh
@@ -535,7 +510,12 @@ Uso:
 
 ### Base de datos (PostgreSQL)
 
-Crea un cron para respaldos diarios:
+La base del juego **la respalda `realtyba-api`**, no este servidor: aquí no hay nada
+persistente que salvar, las salas viven en memoria y se pierden en cada despliegue (que
+es lo correcto: una partida que nadie está jugando no tiene por qué sobrevivir).
+
+Aun así, la base `triadvaults` existe y hay que respaldarla desde donde vive. Si es el
+mismo VPS, un cron diario:
 
 ```bash
 sudo mkdir -p /opt/backups/triadvaults
@@ -570,36 +550,52 @@ gunzip -c /opt/backups/triadvaults/triadvaults_XXXXXXXX_XXXXXX.sql.gz | sudo -u 
 
 ## 14. Troubleshooting
 
-### El contenedor no conecta a PostgreSQL
+### El contenedor no alcanza la API de cuentas
 
-**Síntoma:** `✅ PostgreSQL conectado` no aparece en los logs, el health check
-devuelve `"storage":"json"`.
+**Síntoma:** el health check devuelve `"api": true` pero nadie puede iniciar sesión, o
+el progreso no se guarda aunque la partida vaya bien.
 
-**Causa:** Docker no puede alcanzar el Postgres del host.
-
-**Solución:** Verifica que `host.docker.internal` resuelve desde dentro del
-contenedor:
+`api: true` solo dice que las variables están **puestas**, no que la API responda. Para
+saberlo, prueba desde dentro del contenedor:
 
 ```bash
-docker compose exec app ping -c 2 host.docker.internal
+docker compose exec app wget -qO- $TRIADVAULTS_API_URL/api/triadvaults/health
 ```
 
-Si no resuelve, comprueba que `extra_hosts` está en el `docker-compose.yml`.
+Si no resuelve y la API vive en el mismo host, comprueba que `host.docker.internal`
+funciona; en Ubuntu < 24.04 `host-gateway` puede fallar.
 
-En Ubuntu < 24.04, `host-gateway` puede no funcionar. Alternativa: usa la IP
-del host directamente:
+**No lo arregles poniendo la IP del bridge** (`172.17.0.1`) en `TRIADVAULTS_API_URL`.
+Esa variable es ahora la única de la API y de ella sale también la URL que se hornea
+en el cliente ([Dockerfile](../Dockerfile) copia el `.env` y compila con él), así que
+una dirección que solo existe dentro del contenedor deja al navegador sin API: el
+síntoma se cambia por otro peor, con el servidor contento y nadie capaz de entrar.
 
-```bash
-# Obtener la IP del bridge de Docker
-ip addr show docker0 | grep -oP 'inet \K[\d.]+'
-# Normalmente 172.17.0.1
-```
+El valor tiene que ser **alcanzable desde los dos lados**, contenedor y navegador —
+en un despliegue normal, el dominio público de la API. Si el contenedor no llega a
+ese dominio, el problema es de red del host (DNS interno, split-horizon, firewall
+saliente) y se arregla ahí, no en el `.env`.
 
-Pon esa IP en el `.env`:
+### El registro funciona pero el socket rechaza a todo el mundo
 
-```env
-DB_HOST=172.17.0.1
-```
+**Síntoma:** el jugador se registra y entra sin problema, y al crear o unirse a una sala
+el cliente se queda en «Conectando...» o dice «Autenticación denegada: Token inválido».
+
+**Causa casi segura:** `TRIADVAULTS_JWT_SECRET` no coincide entre el `.env` del juego y
+el de `realtyba-api`. El REST lo sirve Laravel —que firma con *su* secreto y por eso
+funciona— y el socket lo verifica este servidor con el suyo.
+
+**Solución:** compara los dos ficheros. El valor tiene que ser idéntico y de al menos
+32 bytes.
+
+### El servidor reporta 401 al guardar el progreso
+
+**Síntoma:** en los logs, `[api] POST /progress respondió 401`. Se juega bien pero nada
+se guarda.
+
+**Causa:** `TRIADVAULTS_INTERNAL_SECRET` no coincide con el de la API. Si en cambio ves
+un **503**, es que en la API está vacío: sin secreto configurado, la API cierra la
+puerta en lugar de abrirla.
 
 ### WebSocket no conecta (el juego se queda en "Conectando...")
 
@@ -676,7 +672,7 @@ htop
           └─────────┬──────────┘
                     │ host.docker.internal
           ┌─────────┴──────────┐
-          │   PostgreSQL :5432 │  ← Central, compartida
+          │   PostgreSQL :5432 │  ← Central; la usa realtyba-api
           │   (base: triadvaults)│
           └────────────────────┘
 ```

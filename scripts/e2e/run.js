@@ -2,11 +2,14 @@
 /**
  * Pruebas de extremo a extremo sobre el juego real, en Chrome.
  *
- * Requiere `npm run dev` (Vite en :5173 y servidor en :3001) en otra terminal.
+ * Requiere tres cosas levantadas: realtyba-api (las cuentas), el servidor de
+ * salas y el cliente. Con `npm run dev` arrancan los dos últimos; la API va
+ * aparte, y con TRIADVAULTS_DEV_ECHO_PIN=true para poder verificar sin correo.
+ *
  * Uso: node scripts/e2e/run.js [solo|duo|reconnect]
  */
 import { launchChrome, connect, findChrome } from './cdp.js';
-import { API_URL, APP_URL, serverIsUp, appIsUp } from './fixtures.js';
+import { API_URL, APP_URL, SOCKET_URL, apiIsUp, serverIsUp, appIsUp } from './fixtures.js';
 import { runSolo } from './scenarios/solo.js';
 import { runDuo } from './scenarios/duo.js';
 import { runReconnect } from './scenarios/reconnect.js';
@@ -21,8 +24,15 @@ if (!findChrome()) {
   console.error('No se encontró Chrome. Define CHROME_PATH o instala los binarios de Playwright.');
   process.exit(1);
 }
+if (!(await apiIsUp())) {
+  console.error(
+    `La API de cuentas no responde en ${API_URL}. Arranca realtyba-api ` +
+      '(con TRIADVAULTS_DEV_ECHO_PIN=true) y comprueba API_URL.'
+  );
+  process.exit(1);
+}
 if (!(await serverIsUp())) {
-  console.error(`El servidor no responde en ${API_URL}. Arranca "npm run dev" primero.`);
+  console.error(`El servidor de salas no responde en ${SOCKET_URL}. Arranca "npm run dev" primero.`);
   process.exit(1);
 }
 if (!(await appIsUp())) {

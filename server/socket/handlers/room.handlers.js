@@ -1,5 +1,4 @@
 import { EVENTS } from '../../../shared/events.js';
-import { DatabaseManager } from '../../db/index.js';
 import { toRoomPayload } from '../../rooms/roomState.js';
 import { broadcastAll, broadcastRoomList } from '../broadcast.js';
 
@@ -10,9 +9,11 @@ export function registerRoomHandlers(io, socket, roomManager) {
     if (typeof callback === 'function') callback(payload);
   };
 
-  socket.on(EVENTS.CREATE_ROOM, async (payload, callback) => {
-    // El nivel siempre sale de la BD: el cliente no decide en qué nivel empieza.
-    const level = await DatabaseManager.getMaxLevel(username);
+  socket.on(EVENTS.CREATE_ROOM, (payload, callback) => {
+    // El nivel sale de la cuenta, no del cliente: nadie decide en qué nivel empieza.
+    // Se leyó de la API al conectar (ver admitPlayer en socket/index.js) y se
+    // mantiene al día con lo que este mismo proceso reporta al completar niveles.
+    const level = socket.user.maxLevel || 1;
     const { room, reconnected } = roomManager.createRoom({ uid, name: username, socketId: socket.id, level });
 
     if (!reconnected) room.currentLevel = level;

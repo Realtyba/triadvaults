@@ -1,5 +1,5 @@
 import { EVENTS, GHOST_DAMAGE } from '../../../shared/events.js';
-import { recordLevelCompletion } from '../../services/progression.js';
+import { reportLevelCompletion } from '../../services/apiClient.js';
 import { broadcastAll } from '../broadcast.js';
 
 export function registerGameHandlers(io, socket, roomManager) {
@@ -46,22 +46,41 @@ export function registerGameHandlers(io, socket, roomManager) {
     broadcastAll(io, roomManager, room);
 
     // El progreso se guarda con el nivel recién superado, no con el siguiente.
-    // Se identifica al agente por `uid`: el nombre puede haber cambiado desde el
-    // perfil a mitad de partida y entonces la escritura no encontraría su fila.
-    for (const participant of participants) {
-      const identity = { uid: participant.uid, name: participant.name };
-      const result = await recordLevelCompletion(identity, {
-        level: completedLevel,
-        timeSpent,
-        playersCount,
-        damageTaken: participant.damageTaken,
-        deaths: participant.deaths
-      });
-      if (!result) continue;
+    // Se identifica al agente por `uid` —el id de su cuenta en Laravel— y no por
+    // nombre: el perfil permite renombrarse a mitad de partida, y entonces la
+    // escritura no encontraría su fila.
+    //
+    // Los tres van en UNA petición. Antes era un `await` por participante, y ahora
+    // que cada uno sería un viaje HTTP eso serían tres esperas encadenadas justo
+    // donde los jugadores miran la pantalla de carga del nivel siguiente.
+    const results = await reportLevelCompletion({
+      level: completedLevel,
+      timeSpent,
+      playersCount,
+      participants: participants.map(p => ({
+        playerId: Number(p.uid),
+        damageTaken: p.damageTaken,
+        deaths: p.deaths
+      }))
+    });
 
-      io.to(participant.socketId).emit(EVENTS.USER_PROGRESS_UPDATED, result.stats);
+    // A quién mandar cada resultado. La API responde por playerId y el socket al
+    // que hay que emitir lo sabe solo este proceso.
+    const socketByPlayerId = new Map(participants.map(p => [Number(p.uid), p.socketId]));
+
+    for (const result of results) {
+      const socketId = socketByPlayerId.get(Number(result.playerId));
+      if (!socketId) continue;
+
+      // El nivel máximo se refresca aquí para que la siguiente sala que cree este
+      // jugador arranque donde toca, sin volver a preguntar a la API.
+      if (Number(result.playerId) === Number(uid) && result.stats) {
+        socket.user.maxLevel = result.stats.maxLevelReached;
+      }
+
+      io.to(socketId).emit(EVENTS.USER_PROGRESS_UPDATED, result.stats);
       if (result.unlocked.length > 0) {
-        io.to(participant.socketId).emit(EVENTS.ACHIEVEMENT_UNLOCKED, { keys: result.unlocked });
+        io.to(socketId).emit(EVENTS.ACHIEVEMENT_UNLOCKED, { keys: result.unlocked });
       }
     }
   });

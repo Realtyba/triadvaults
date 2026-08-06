@@ -55,24 +55,51 @@ Es el precio de la plataforma y no hay nada que recortar ahí.
 
 ## 3. La decisión que hay que tomar antes de compilar
 
-**`VITE_API_URL` se cuece dentro del paquete.** No es una opción que el jugador cambie
-después: se resuelve al compilar el cliente.
+**`TRIADVAULTS_API_URL` y `VITE_SOCKET_URL` se cuecen dentro del paquete.** No son
+opciones que el jugador cambie después: se resuelven al compilar el cliente.
+
+Desde que las cuentas viven en `realtyba-api`, son **dos** URL y apuntan a servicios
+distintos: el REST lo sirve Laravel y el socket el servidor de salas. Una por servicio
+y ninguna más — la de la API no lleva prefijo `VITE_` porque el servidor de salas lee
+esa misma variable; al cliente la pasa `vite.config.js`.
 
 ```bash
-# Juego completo, contra tu servidor
-VITE_API_URL=https://tu-servidor.example npm run dist:linux
+# Juego completo
+TRIADVAULTS_API_URL=https://api.tu-servidor.example \
+VITE_SOCKET_URL=https://game.tu-servidor.example \
+npm run dist:linux
 
-# Sin la variable: un solo jugador
+# Sin las variables: un solo jugador
 npm run dist:linux
 ```
 
-Sin ella, la build abierta desde disco detecta el protocolo `file:`
-([src/network/ApiClient.js](../src/network/ApiClient.js)) y se queda en modo local: se
+Sin ellas, la build abierta desde disco detecta el protocolo `file:`
+([src/network/endpoints.js](../src/network/endpoints.js)) y se queda en modo local: se
 juega, se progresa y se desbloquean logros, pero no hay salas, ni ranking, ni cuenta.
 
 Es una elección con consecuencias, no un descuido: publicar con multijugador significa
-mantener un servidor vivo mientras haya gente jugando. Un juego de un solo jugador no
+mantener dos servicios vivos mientras haya gente jugando. Un juego de un solo jugador no
 se cae nunca.
+
+### El `Origin: null` de la build empaquetada
+
+Este es el detalle que **solo se ve en el paquete instalado, nunca en `npm run dev`**, y
+por eso es fácil descubrirlo cuando ya está publicado.
+
+La build de Electron carga el cliente desde `file://`. Un documento con origen opaco
+manda la cadena literal `Origin: null` en cada petición, y el resolutor de CORS de
+`realtyba-api` normalmente hace `parse_url()` sobre el origen: con `"null"` devuelve
+`null`, lo rechaza, y el navegador embebido bloquea *todas* las llamadas del juego.
+
+`realtyba-api` tiene una rama específica para `api/triadvaults/*` que compara la lista
+literal, así que **hay que incluir `null`** en su `.env`:
+
+```env
+TRIADVAULTS_ALLOWED_ORIGINS=https://game.tu-servidor.example,null
+```
+
+Sin eso, el juego empaquetado no puede ni iniciar sesión, mientras que en desarrollo
+todo funciona.
 
 El modo sin conexión guarda el progreso en local y lo vuelca al servidor cuando hay
 enlace; el detalle está en [ARCHITECTURE.md](ARCHITECTURE.md), sección 12.
@@ -206,7 +233,10 @@ y `APPLE_TEAM_ID` para notarizar en macOS.
 - [ ] **Marcadores `.invalid`**: `homepage` en `package.json` y `linux.maintainer` en
       `electron-builder.yml`. El `.deb` los exige; están sobre un dominio reservado
       que nunca resuelve, precisamente para que se vean.
-- [ ] **`VITE_API_URL`**: decidir si el juego publicado tiene multijugador (sección 3).
+- [ ] **`TRIADVAULTS_API_URL` y `VITE_SOCKET_URL`**: decidir si el juego publicado tiene
+      multijugador (sección 3).
+- [ ] **`TRIADVAULTS_ALLOWED_ORIGINS` incluye `null`** en el `.env` de realtyba-api,
+      o la build empaquetada no podrá ni iniciar sesión (sección 3).
 - [ ] **Appid y depots** de Steamworks en las plantillas de `steam/`.
 - [ ] **Logros dados de alta** en Steamworks con los API Names de la sección 5.
 - [ ] **Versión**: `package.json` se sube a mano. Da nombre a los instalables.
@@ -241,7 +271,7 @@ ls release/linux-unpacked/resources/app.asar.unpacked/node_modules/steamworks.js
 
 **`files` es una lista blanca con una excepción.** electron-builder añade siempre las
 `dependencies` de `package.json`, así que hay un `!node_modules/**/*` para que no se
-cuelen `pg`, `express` ni `nodemailer` —40 MB de código de servidor que el jugador no
+cuelen `express`, `socket.io` ni el resto del servidor —código que el jugador no
 ejecuta— y detrás una reinclusión explícita de `steamworks.js`. El orden importa.
 
 Para comprobar que no se ha colado nada:

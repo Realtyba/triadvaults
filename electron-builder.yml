@@ -19,8 +19,9 @@ directories:
 
 # La lista blanca no basta por sí sola: electron-builder añade siempre las
 # `dependencies` de package.json, así que sin la exclusión final se colaban en el
-# instalable `pg`, `express` y `nodemailer` —40 MB de código de servidor que el
-# jugador no ejecuta— y con ellos toda su superficie de ataque.
+# instalable `express`, `socket.io` y compañía —código de servidor que el jugador no
+# ejecuta— y con ellos toda su superficie de ataque. (`pg` y `nodemailer` ya ni
+# siquiera son dependencias: la persistencia y el correo se fueron a realtyba-api.)
 #
 # Aquí no hace falta ninguna: el cliente es un paquete de Vite con todo dentro, y
 # Electron solo carga `dist/index.html` y los dos ficheros de `electron/`.
@@ -34,9 +35,8 @@ files:
   - 'node_modules/steamworks.js/**/*'
 
 # El servidor NO se empaqueta. El juego de escritorio es el cliente: en solitario
-# corre entero en local (ver `OfflineStore`), y para jugar acompañado se conecta al
-# servidor que indique VITE_API_URL al construir. Meter Express y Postgres dentro del
-# instalable obligaría a cada jugador a levantar una base de datos para jugar solo.
+# corre entero en local (ver `OfflineStore`), y para jugar acompañado se conecta a los
+# servicios que indiquen TRIADVAULTS_API_URL y VITE_SOCKET_URL al construir.
 
 asar: true
 

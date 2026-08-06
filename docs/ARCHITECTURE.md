@@ -16,21 +16,32 @@ Visión técnica del motor 3D, la generación procedural, el multijugador y la c
                  │  src/procedural/trazado y navegación      │
                  │  src/ui/        store + vistas + modales   │
                  │  src/network/   REST + socket              │
-                 └────────────────────┬─────────────────────┘
-                                      │  WebSocket / HTTP
-                 ┌────────────────────┴─────────────────────┐
-                 │        Servidor Node (Express + IO)       │
-                 │                                          │
-                 │  server/http/    rutas y middleware JWT   │
-                 │  server/socket/  handlers por dominio     │
-                 │  server/rooms/   estado de salas          │
-                 │  server/db/      repositorios             │
-                 └────────────────────┬─────────────────────┘
-                                      │
-                 ┌────────────────────┴─────────────────────┐
-                 │  PostgreSQL  (respaldo: server/data/*.json)│
-                 └──────────────────────────────────────────┘
+                 └───────┬──────────────────────┬───────────┘
+                         │ REST                 │ WebSocket
+                         │ (cuentas)            │ (partida)
+        ┌────────────────┴──────────┐   ┌───────┴──────────────────────┐
+        │  realtyba-api (Laravel)    │   │ Servidor de salas (Node + IO) │
+        │                            │   │                              │
+        │  cuentas, PIN, perfil      │   │  server/socket/  handlers     │
+        │  progreso y logros         │   │  server/rooms/   salas        │
+        │  catálogo + panel admin    │   │  server/services/apiClient.js │
+        │  correo (servicio central) │   │                              │
+        │                            │◄──┤  reporta el nivel completado  │
+        │  BD `triadvaults`          │   │  (X-Internal-Secret, en lote) │
+        └────────────────────────────┘   └──────────────────────────────┘
+                                              sin base de datos:
+                                              las salas viven en memoria
 ```
+
+Dos servicios y **una sola variable por servicio**: `TRIADVAULTS_API_URL` para la API
+y `VITE_SOCKET_URL` para el socket; las resuelve `src/network/endpoints.js`. Antes eran
+el mismo proceso, y por eso `SocketClient.js` importaba la URL de `ApiClient.js`.
+
+La de la API no lleva prefijo `VITE_` porque también la lee el servidor de salas, así
+que al cliente llega horneada por `vite.config.js` como `__API_URL__`. Se inyecta esa
+variable y solo esa, en vez de ampliar `envPrefix` a `TRIADVAULTS_`: con ese prefijo
+`TRIADVAULTS_JWT_SECRET` y `TRIADVAULTS_INTERNAL_SECRET` acabarían publicados dentro
+del bundle del cliente.
 
 `shared/events.js` define los nombres de evento y lo importan **ambos** lados: un
 typo en una cadena no puede romper el multijugador en silencio.
@@ -140,61 +151,78 @@ src/ui/
   controllers/        AuthController, RoomController
 ```
 
+La interfaz **no se tocó** al mover las cuentas a Laravel: `src/network/ApiClient.js`
+traduce el formato de la API al plano que estas vistas esperan (función `unwrap`), y la
+firma de sus métodos no cambió.
+
 ---
 
 ## 7. Persistencia
 
-`server/db/` está partido por repositorio (`users`, `recovery`, `progress`,
-`leaderboard`) sobre un `pool` común, con `DatabaseManager` como fachada estable.
+**Este servidor no abre ninguna conexión a base de datos.** Las salas viven en memoria
+—`server/rooms/`— y todo lo que hay que recordar de una partida a otra vive en
+`realtyba-api`: cuentas, progreso, logros concedidos y el catálogo de logros.
 
-### Dónde vive la base de datos
+### Reparto
 
-| | |
+| Qué | Dónde |
 |---|---|
-| Motor | PostgreSQL en el contenedor Docker **`postgres-local`** (compartido con el resto del workspace) |
-| Base | **`triadvaults`** — propia del juego, no la del CRM |
-| Tabla | `triad_game_users` (más `triad_schema_migrations`, historial de migraciones) |
-| Configuración | `server/db/config.js`, leída de `.env`; la comparten servidor, migrador y scripts |
+| Registro, login, PIN, perfil, recuperación | `realtyba-api`, prefijo `/api/triadvaults` |
+| Progreso, logros y clasificación | `realtyba-api`, base `triadvaults` |
+| Administración (suspender, auditar, editar el catálogo) | Módulo `triad-vaults` de `realtyba-front` |
+| Salas, posiciones, daño, sincronía | Aquí, en memoria |
 
-Hubo un periodo en que el ejecutor de migraciones apuntaba a `tenant_realtyba` y el
-servidor a otra base: las cuentas se creaban en un sitio y se buscaban en otro, así que
-el acceso fallaba con credenciales correctas. Por eso **la configuración de conexión es
-un único módulo** y nadie la reconstruye por su cuenta.
+Desapareció con la migración: `server/db/`, `server/http/`, `server/mailer.js`,
+`server/services/progression.js`, `migrations/` y el respaldo `server/data/users.json`.
 
-### Respaldo JSON y cómo saber cuál está activo
+### El modo degradado ya no existe
 
-Si Postgres no responde, los repositorios caen a `server/data/users.json` para poder
-jugar en local sin contenedor. Ese respaldo es un modo degradado, no un equivalente:
-las cuentas de Postgres no se ven y el progreso no llega allí.
+Antes, si Postgres no respondía, los repositorios caían a un fichero JSON local. Era un
+modo degradado que se parecía demasiado a uno sano: las cuentas de Postgres no se veían
+y el progreso no llegaba allí. Ya no hay respaldo — sin API no hay sesión, que es un
+estado mucho más fácil de reconocer.
 
-Para no confundir un servidor degradado con uno sano:
+Lo que sí se conserva es el **modo sin conexión del cliente** (sección 12), que es otra
+cosa: guarda lo jugado en la máquina del jugador y lo vuelca cuando vuelve la red.
 
-- El arranque imprime **`✅ PostgreSQL conectado`** o un recuadro de error con la causa
-  y el comando que la arregla.
-- `GET /api/health` devuelve `storage: "postgres" | "json"`.
-- Con `DB_REQUIRED=true` (automático si `NODE_ENV=production`) el servidor **se niega a
-  arrancar** en vez de degradarse.
+### Cómo saber si el servidor puede guardar progreso
+
+- El arranque avisa si faltan `TRIADVAULTS_API_URL` o `TRIADVAULTS_INTERNAL_SECRET`.
+- `GET /health` devuelve `{ service, uptime, api }`, donde `api` dice si la integración
+  está configurada. Sin ella se juega igual, pero nada se guarda — y desde fuera un
+  servidor así sería indistinguible de uno sano.
+- Sin `TRIADVAULTS_JWT_SECRET` el servidor **se niega a arrancar**: sin él no podría
+  verificar ningún token.
 
 ### Puesta en marcha
 
 ```bash
-npm run setup:env        # crea .env con un JWT_SECRET aleatorio (lo hace también `npm run dev`)
-npm run db:setup         # crea la base "triadvaults" y aplica las migraciones
-npm run db:import-legacy # opcional: trae cuentas de otra base
-npm run db:import-legacy -- --from-json   # ...o del respaldo server/data/users.json
+npm run setup:env   # crea .env desde .env.example (lo hace también `npm run dev`)
 ```
+
+Después hay que **copiar a mano** `TRIADVAULTS_JWT_SECRET` y
+`TRIADVAULTS_INTERNAL_SECRET` desde el `.env` de `realtyba-api`. El script ya no los
+inventa: son secretos compartidos, y uno generado aquí no coincidiría con el de allí.
+El síntoma sería de los peores posibles —registro y login funcionando con normalidad, y
+todas las conexiones de socket rechazadas— así que es mejor un hueco vacío que un valor
+plausible y equivocado.
+
+El esquema y su siembra están en `realtyba-api`; ver `docs/SECURITY_AND_DATABASE.md`.
 
 ### Verificación de correo
 
 El registro deja la cuenta en `is_verified = false` y exige un PIN de 6 dígitos antes de
-jugar. Sin SMTP configurado el PIN no puede llegar por correo, así que con
-`AUTH_DEV_ECHO_PIN=true` (nunca en producción) viaja en la respuesta como `devCode` y el
-modal lo muestra en pantalla. La decisión se toma **con el resultado real del envío**:
-unas credenciales de relleno pasan por configuradas y fallan igual.
+jugar. Lo emite y lo comprueba Laravel, y el correo sale por el servicio central (no por
+un SMTP propio del juego, que era un segundo sitio donde configurar lo mismo).
 
-`POST /api/resend-verification` emite un código nuevo, con 60 s de espera entre
-peticiones. Es también el rescate de las cuentas antiguas, que no tienen ningún código
-guardado y por tanto no podían verificarse con ningún valor.
+Sin SMTP el PIN no puede llegar, así que con `TRIADVAULTS_DEV_ECHO_PIN=true` en
+`realtyba-api` (nunca en producción) viaja en la respuesta como `devCode` y el modal lo
+muestra. La decisión se toma **con el resultado real del envío**: unas credenciales de
+relleno pasan por configuradas y fallan igual.
+
+`POST /api/triadvaults/resend-verification` emite un código nuevo, con 120 s de espera
+entre peticiones por cuenta. Es también el rescate de las cuentas antiguas, que no
+tienen ningún código guardado y por tanto no podían verificarse con ningún valor.
 
 ---
 
@@ -267,9 +295,10 @@ imposible, no más interesante.
 
 ## 10. Logros
 
-El catálogo vive en la tabla **`triad_achievements`** (migración 005). Antes era una lista
-fija en `shared/achievements.js`, y eso obligaba a publicar una versión nueva del juego para
-añadir un logro. Ahora añadir uno es un `INSERT`.
+El catálogo vive en la tabla **`triad_achievements`**, en `realtyba-api`, y se edita desde
+el módulo `triad-vaults` del panel con un constructor visual de reglas. Antes era una lista
+fija en `shared/achievements.js` —había que publicar una versión del juego para añadir un
+logro— y después una tabla que se editaba con SQL a mano.
 
 Lo que queda en `shared/achievements.js` es el **motor**: las métricas que se pueden mirar,
 los comparadores y el evaluador. Las condiciones son **datos**, no funciones:
@@ -285,14 +314,25 @@ ejecución de código dentro del servidor.
 
 Solo hace falta tocar código para mirar una métrica que aún no existe. Las disponibles son
 `level`, `maxLevel`, `puzzlesSolved`, `totalTimePlayed`, `timeSpent`, `playersCount`,
-`deaths`, `damageTaken` y `flawless` (1 o 0). Ampliarlas es tocar `METRICS` **y** quien las
-calcula, en `server/services/progression.js`.
+`deaths`, `damageTaken` y `flawless` (1 o 0).
 
-`DEFAULT_ACHIEVEMENTS` sigue en el código con dos usos: sembrar la tabla la primera vez —solo
-si está vacía, para no resucitar lo que alguien borró a conciencia— y hacer de catálogo
-cuando se corre sobre el respaldo JSON o sin conexión. El cliente lo recibe por
-`GET /api/achievements`, **sin las condiciones**: no evalúa nada, así que mandarle las reglas
-solo serviría para sugerir lo contrario.
+**El motor existe por duplicado**, y hay que tenerlo presente: el de PHP
+(`AchievementEvaluator`) es el que concede, y el de JavaScript (`shared/achievements.js`)
+lo usa el cliente para avisar en el modo sin conexión. Si divergen, un jugador ve
+desbloquearse un logro sin red que luego el servidor le niega al sincronizar — no rompe
+nada, simplemente miente. El seguro es un fichero de **vectores dorados** que consumen los
+dos: `realtyba-api/tests/Fixtures/TriadVaults/achievement_vectors.json`, contra el test de
+PHP y contra `npm run validate:achievements`.
+
+Ampliar las métricas es tocar `METRICS` en **los dos** motores, y quien las calcula en
+`ProgressionService` (PHP).
+
+`DEFAULT_ACHIEVEMENTS` sigue en el cliente como catálogo del modo sin conexión; la siembra
+inicial de la tabla la hace el seeder de `realtyba-api` —solo si está vacía, para no
+resucitar lo que alguien retiró a conciencia desde el panel. El cliente recibe el catálogo
+vivo por `GET /api/triadvaults/achievements`, **sin las condiciones**: no concede nada, así
+que mandarle las reglas solo serviría para sugerir lo contrario. `steamApiName` sí viaja: lo
+necesita el cliente de escritorio para decirle a Steam qué logro reflejar.
 
 Un logro se retira con `enabled = FALSE`, nunca borrando la fila: quien ya lo tuviera conserva
 su registro en `triad_user_achievements`, y sin definición la interfaz no sabría pintarlo.
@@ -351,13 +391,13 @@ socket: el botón está siempre visible en el menú, con y sin sesión.
 
 Cada nivel superado se apunta en dos sitios: el resumen local —lo que se enseña mientras no
 hay red— y una **cola de partidas pendientes**. Al recuperar el enlace se manda la cola a
-`POST /api/profile/sync`, y es el servidor quien la vuelve a evaluar. El resumen local no se
+`POST /api/triadvaults/profile/sync`, y es el servidor quien la vuelve a evaluar. El resumen local no se
 manda nunca: vive en `localStorage` y editarlo es trivial. `playersCount` se fuerza a 1 por lo
 mismo, o quien lo pusiera a 3 se regalaría el logro de escuadrón completo.
 
 El volcado es de entrega **al menos una vez**: el cliente no borra un nivel de su cola hasta
 que el servidor confirma, así que un acuse perdido provoca un reenvío. Cada nivel lleva el
-instante en que terminó y `triad_game_users.last_offline_sync_at` (migración 006) guarda el
+instante en que terminó y `triad_game_users.last_offline_sync_at` guarda el
 más reciente ya aplicado; lo que no lo supere se descarta. Sin esa marca, un corte de red
 justo después de escribir contaría el mismo nivel dos veces.
 
@@ -375,11 +415,11 @@ cola entera perdería lo jugado mientras la petición viajaba.
 `electron-builder.yml` produce NSIS para Windows, AppImage + deb para Linux y dmg + zip para
 macOS. La lista de ficheros es **blanca**, con una sola excepción: electron-builder añade
 siempre las `dependencies` de `package.json`, así que hace falta un `!node_modules/**/*` para
-que no viajen `pg`, `express` ni `nodemailer` —código de servidor que el jugador no ejecuta—
+que no viajen `express` ni `socket.io` —código de servidor que el jugador no ejecuta—
 y detrás una reinclusión explícita de `steamworks.js`, que sí se necesita.
 
 El servidor no se empaqueta. El juego de escritorio es el cliente: en solitario corre entero
-en local, y para jugar acompañado apunta al servidor que indique `VITE_API_URL` al construir.
+en local, y para jugar acompañado apunta al servidor que indique `TRIADVAULTS_API_URL` al construir.
 Sin esa variable, una build abierta desde el disco detecta el protocolo `file:` y se queda en
 un solo jugador en vez de reintentar contra `file://` para siempre.
 
@@ -426,7 +466,7 @@ quien compila.
 | `npm run test:e2e` | juego real en Chrome: solo, dúo y reconexión (requiere `npm run dev`) |
 | `npm run build` | que el grafo de módulos del cliente resuelve |
 | `npm run dist:linux` / `dist:win` / `dist:mac` | paquete de escritorio, ver [DISTRIBUTION.md](DISTRIBUTION.md) |
-| `curl localhost:3001/api/health` | que el servidor sirve desde Postgres y no desde el respaldo |
+| `curl localhost:3001/health` | que el servidor de salas responde y tiene la API configurada |
 
 `validate:levels` verifica el trazado; `validate:puzzles` verifica la **regla**. Hacen falta
 las dos: un arquetipo cuya condición de victoria nunca se cumpla dejaría al jugador

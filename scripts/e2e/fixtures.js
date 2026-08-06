@@ -2,16 +2,24 @@
 import { spawn, execSync } from 'child_process';
 import { sleep } from './cdp.js';
 
-export const API_URL = process.env.API_URL || 'http://localhost:3001';
+/**
+ * Las cuentas viven en realtyba-api y las salas en el servidor de Node, así que
+ * hay dos URL. Antes bastaba una porque era el mismo proceso.
+ */
+export const API_URL = (process.env.API_URL || process.env.TRIADVAULTS_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+export const SOCKET_URL = (process.env.SOCKET_URL || 'http://localhost:3001').replace(/\/+$/, '');
 // El puerto lo fija `vite.config.js`; apuntar al 5173 por defecto de Vite hacía
 // que la comprobación previa fallase con el servidor de desarrollo funcionando.
 export const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 export const TEST_PASSWORD = 'e2e-triad-pass';
 
+/** Prefijo de las rutas del juego en Laravel. */
+const API_PREFIX = '/api/triadvaults';
+
 async function post(path, body) {
-  const res = await fetch(API_URL + path, {
+  const res = await fetch(API_URL + API_PREFIX + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body)
   });
   return res.json();
@@ -21,17 +29,17 @@ async function post(path, body) {
  * Crea la cuenta si no existe; si ya existe, simplemente accede.
  *
  * El registro deja la cuenta sin verificar, y sin verificar el juego no deja pasar
- * del modal de PIN. Se completa aquí con el `devCode` que devuelve el servidor
- * cuando el correo no puede salir (`AUTH_DEV_ECHO_PIN`), que es el mismo camino
- * que sigue una persona probando en local.
+ * del modal de PIN. Se completa aquí con el `devCode` que devuelve la API cuando el
+ * correo no puede salir (`TRIADVAULTS_DEV_ECHO_PIN`), que es el mismo camino que
+ * sigue una persona probando en local.
  */
 export async function ensureAgent(username) {
-  const login = await post('/api/login', { identifier: username, password: TEST_PASSWORD });
+  const login = await post('/login', { identifier: username, password: TEST_PASSWORD });
   if (login.success && login.user.isVerified) return login;
 
   const account = login.success
     ? login
-    : await post('/api/register', {
+    : await post('/register', {
         firstName: 'E2E',
         lastName: 'Agent',
         username,
@@ -45,29 +53,43 @@ export async function ensureAgent(username) {
   const code = account.devCode || (await resendPin(account.token));
   if (!code) {
     throw new Error(
-      `No se pudo verificar "${username}": el servidor no devolvió el PIN. ` +
-        'Arranca con AUTH_DEV_ECHO_PIN=true y sin credenciales SMTP.'
+      `No se pudo verificar "${username}": la API no devolvió el PIN. ` +
+        'Arranca realtyba-api con TRIADVAULTS_DEV_ECHO_PIN=true y sin credenciales SMTP.'
     );
   }
 
-  const verified = await post('/api/verify', { username, code });
+  const verified = await post('/verify', { username, code });
   if (!verified.success) throw new Error(`No se pudo verificar "${username}": ${verified.error}`);
 
-  return post('/api/login', { identifier: username, password: TEST_PASSWORD });
+  return post('/login', { identifier: username, password: TEST_PASSWORD });
 }
 
-/** Pide un PIN nuevo; devuelve el código solo si el servidor lo hace eco. */
+/** Pide un PIN nuevo; devuelve el código solo si la API lo hace eco. */
 async function resendPin(token) {
-  const res = await fetch(`${API_URL}/api/resend-verification`, {
+  const res = await fetch(`${API_URL}${API_PREFIX}/resend-verification`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`
+    }
   });
   return (await res.json()).devCode || null;
 }
 
-export async function serverIsUp(url = API_URL) {
+/** ¿Responde la API de cuentas? Sin ella no hay ni registro ni sesión. */
+export async function apiIsUp(url = API_URL) {
   try {
-    return (await (await fetch(`${url}/api/health`)).json()).success === true;
+    return (await (await fetch(`${url}${API_PREFIX}/health`)).json()).success === true;
+  } catch {
+    return false;
+  }
+}
+
+/** ¿Responde el servidor de salas? Es el que se para y arranca en el escenario de reconexión. */
+export async function serverIsUp(url = SOCKET_URL) {
+  try {
+    return (await (await fetch(`${url}/health`)).json()).success === true;
   } catch {
     return false;
   }

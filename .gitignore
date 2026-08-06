@@ -18,3 +18,7 @@ steam_appid.txt
 # real y el único que se mantiene al día. package-lock.json queda obsoleto en cuanto
 # se genera (npm no lo actualiza) y confunde sobre cuál manda.
 package-lock.json
+
+# Grafo de conocimiento de graphify: artefacto generado, se reconstruye
+# con `graphify update .` (solo AST, sin coste de API).
+graphify-out/

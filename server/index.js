@@ -6,12 +6,18 @@ import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-import { initDatabase, closeDatabase, activeStorage, DatabaseManager } from './db/index.js';
-import { authRouter } from './http/routes/auth.routes.js';
-import { profileRouter } from './http/routes/profile.routes.js';
-import { leaderboardRouter } from './http/routes/leaderboard.routes.js';
-import { achievementsRouter } from './http/routes/achievements.routes.js';
 import { registerSocketLayer } from './socket/index.js';
+import { apiIsConfigured } from './services/apiClient.js';
+
+/**
+ * Servidor de salas de Triad Vaults.
+ *
+ * Coordina las partidas co-op en tiempo real y nada más: las cuentas, el progreso,
+ * los logros y el correo viven en realtyba-api. Este proceso no abre ninguna
+ * conexión a base de datos ni guarda nada en disco — las salas son efímeras y viven
+ * en memoria, porque una partida que nadie está jugando no tiene por qué sobrevivir
+ * a un reinicio.
+ */
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -20,15 +26,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use('/api', authRouter);
-app.use('/api/profile', profileRouter);
-app.use('/api/leaderboard', leaderboardRouter);
-app.use('/api/achievements', achievementsRouter);
-
-// `storage` dice si se está sirviendo desde Postgres o desde el respaldo JSON.
-// Sin ese dato, un servidor degradado es indistinguible de uno sano desde fuera.
-app.get('/api/health', (req, res) =>
-  res.json({ success: true, uptime: process.uptime(), storage: activeStorage() })
+/**
+ * Salud del servidor de salas.
+ *
+ * `api` dice si la integración con realtyba-api está configurada. Sin ella se juega
+ * igual, pero el progreso no se guarda en ningún sitio, y desde fuera un servidor
+ * así sería indistinguible de uno sano.
+ */
+app.get('/health', (req, res) =>
+  res.json({
+    success: true,
+    service: 'triadvaults-rooms',
+    uptime: process.uptime(),
+    api: apiIsConfigured()
+  })
 );
 
 // Build de producción del cliente
@@ -41,30 +52,28 @@ const io = new Server(httpServer, {
   pingInterval: 10000
 });
 
-// La base de datos primero: si falla y es obligatoria, aquí se aborta. Aceptar
-// sockets antes de saberlo dejaba entrar a jugadores a un servidor sin persistencia.
-await initDatabase();
-
-// Primer arranque tras migrar: la tabla del catálogo existe pero está vacía. Se
-// siembra con los logros de salida; si ya hay filas, no se toca nada.
-await DatabaseManager.seedAchievementCatalog();
+if (!apiIsConfigured()) {
+  console.warn(
+    '⚠️  TRIADVAULTS_API_URL o TRIADVAULTS_INTERNAL_SECRET no están definidos: ' +
+      'se podrá jugar, pero el progreso y los logros no se guardarán.'
+  );
+}
 
 registerSocketLayer(io);
 
 httpServer.listen(PORT, () => {
-  console.log(`⚡ Triad Vaults — servidor multijugador en http://localhost:${PORT}`);
+  console.log(`⚡ Triad Vaults — servidor de salas en http://localhost:${PORT}`);
 });
 
-/** Apagado ordenado: avisar a los clientes y soltar las conexiones de Postgres. */
+/** Apagado ordenado: avisar a los clientes antes de cerrar. */
 let shuttingDown = false;
-async function shutdown(signal) {
+function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n${signal} recibido, cerrando...`);
 
   io.close();
   httpServer.close();
-  await closeDatabase();
   process.exit(0);
 }
 

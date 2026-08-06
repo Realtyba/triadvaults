@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 import { EVENTS } from '../../shared/events.js';
-import { resolveBaseUrl } from './ApiClient.js';
+import { socketBaseUrl } from './endpoints.js';
 import { session } from './session.js';
 
 /**
@@ -11,7 +11,7 @@ import { session } from './session.js';
  * personaje dejase de responder y el fantasma se quedase congelado.
  */
 export class SocketClient {
-  constructor(baseUrl = resolveBaseUrl()) {
+  constructor(baseUrl = socketBaseUrl()) {
     this.baseUrl = baseUrl;
     this.currentRoom = null;
     this.uid = null;

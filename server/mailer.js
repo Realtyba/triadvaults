@@ -112,7 +112,7 @@ export const sendMailTemplate = async (email, templateName, lang, data) => {
   `;
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || '"Triad Vaults" <noreply@triadvaults.com>',
+    from: process.env.SMTP_FROM || `"Triad Vaults" <${process.env.SMTP_USER || 'noreply@triadvaults.com'}>`,
     to: email,
     subject,
     text: textContent,

@@ -17,6 +17,7 @@ import { icon } from './icons.js';
 import { quality } from '../engine/QualitySettings.js';
 import { bindings } from '../engine/Bindings.js';
 import { offlineStore } from '../network/OfflineStore.js';
+import { mirrorToSteam, reconcileWithSteam } from '../network/SteamBridge.js';
 
 const AUDIO_KEY = 'triad_audio_muted';
 
@@ -616,8 +617,14 @@ export class UIManager {
   onAchievementsUnlocked(keys = []) {
     if (keys.length === 0) return;
 
-    this.toasts.push(keys, this.store.get().achievementCatalog);
+    const catalog = this.store.get().achievementCatalog;
+
+    this.toasts.push(keys, catalog);
     this.sound.playUnlock();
+
+    // Espejo en Steam, sin esperarlo: el aviso y el perfil del juego no dependen de
+    // que Steam conteste, y en el navegador esta llamada no hace absolutamente nada.
+    mirrorToSteam(keys, catalog);
 
     const owned = new Set([...(this.store.get().achievements || []), ...keys]);
     this.store.patch({ achievements: [...owned] });
@@ -625,7 +632,14 @@ export class UIManager {
 
   async fetchAchievements() {
     const res = await this.api.getAchievements();
-    if (res.success) this.store.patch({ achievements: res.keys || [] });
+    if (!res.success) return;
+
+    const keys = res.keys || [];
+    this.store.patch({ achievements: keys });
+
+    // Steam no sabe nada de lo conseguido en otra máquina, en el navegador o antes
+    // de instalar por Steam. Aquí es donde se pone al día.
+    reconcileWithSteam(keys, this.store.get().achievementCatalog);
   }
 
   /**

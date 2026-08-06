@@ -1,0 +1,24 @@
+// Depot de Windows. Ver steam/app_build.vdf para el uso completo.
+//
+// `LocalPath` es relativo al `contentroot` del app_build. Se sube el directorio
+// entero que produce `npm run dist:win`, no el instalador: dentro está
+// `Triad Vaults.exe` con todo lo que necesita al lado.
+//
+// Nota: `dist:win` desde Linux genera este directorio sin problema; lo único que
+// necesita `wine` es empaquetarlo en el instalador NSIS, que para Steam sobra.
+
+"DepotBuild"
+{
+    "DepotID"       "481"   // ⚠ marcador — el tuyo sale de Steamworks
+    "contentroot"   ""
+
+    "FileMapping"
+    {
+        "LocalPath"     "win-unpacked/*"
+        "DepotPath"     "."
+        "recursive"     "1"
+    }
+
+    // Sin `FileExclusion`: el directorio ya lo produce electron-builder con
+    // exactamente lo que hace falta. Ver la lista `files` de electron-builder.yml.
+}

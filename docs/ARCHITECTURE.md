@@ -366,11 +366,17 @@ cola entera perdería lo jugado mientras la petición viajaba.
 
 ---
 
-## 13. Empaquetado de escritorio
+## 13. Empaquetado de escritorio y Steam
 
-`electron-builder.yml` produce NSIS para Windows y AppImage + deb para Linux. La lista de
-ficheros es **blanca, no negra**: con exclusiones habría que acordarse de sacar cada
-dependencia de servidor nueva, y basta un olvido para meter credenciales en el instalable.
+> El procedimiento completo —qué comando produce qué, cómo se sube a Steam y qué falta
+> antes de publicar— está en **[DISTRIBUTION.md](DISTRIBUTION.md)**. Aquí solo las
+> decisiones de diseño.
+
+`electron-builder.yml` produce NSIS para Windows, AppImage + deb para Linux y dmg + zip para
+macOS. La lista de ficheros es **blanca**, con una sola excepción: electron-builder añade
+siempre las `dependencies` de `package.json`, así que hace falta un `!node_modules/**/*` para
+que no viajen `pg`, `express` ni `nodemailer` —código de servidor que el jugador no ejecuta—
+y detrás una reinclusión explícita de `steamworks.js`, que sí se necesita.
 
 El servidor no se empaqueta. El juego de escritorio es el cliente: en solitario corre entero
 en local, y para jugar acompañado apunta al servidor que indique `VITE_API_URL` al construir.
@@ -379,6 +385,33 @@ un solo jugador en vez de reintentar contra `file://` para siempre.
 
 El icono se genera por código (`npm run icon`, `scripts/make-icon.js`) en lugar de guardar un
 binario en el repositorio: así se puede leer y cambiar de color en una línea.
+
+### Steam
+
+`steamworks.js` es un módulo **nativo**, así que vive en el proceso principal
+([electron/steam.js](../electron/steam.js)) y nunca en el de render: la ventana corre con
+`sandbox: true` y `nodeIntegration: false`, y no puede —ni debe poder— cargar binarios. El
+render llega por IPC a través de tres funciones enumeradas a mano en `preload.cjs`; exponer
+`ipcRenderer` entero le devolvería a la página acceso a cualquier canal del principal.
+
+Dos consecuencias en el empaquetado, y las dos fallan **solo en la build empaquetada**, que
+es lo que las hace peligrosas: el `.node` tiene que quedar fuera del asar (`asarUnpack`,
+porque el sistema necesita un fichero real en disco para enlazarlo), y el módulo tiene que
+sobrevivir a la exclusión de `node_modules`.
+
+**Los logros de Steam son un espejo, no la autoridad.** Los concede nuestro servidor y viven
+en la base de datos; el reflejo en Steam se envía después y sin esperarlo. Si Steam no está
+—el navegador, la build suelta, el cliente cerrado— el puente devuelve un objeto inerte, lo
+dice una vez, y no hay ninguna otra diferencia. Es el camino que va a recorrer la mayoría de
+las partidas, así que es el que tiene que ser aburrido.
+
+La correspondencia vive en `triad_achievements.steam_api_name`, en la misma fila que el
+logro, para conservar lo de la sección 10: añadir un logro sigue siendo un `INSERT`.
+
+El overlay queda tras `STEAM_OVERLAY=true` y **apagado por defecto**: necesita el conmutador
+`in-process-gpu`, que mete el proceso de GPU dentro del principal y se lleva por delante su
+aislamiento. Una comodidad a cambio de un límite de seguridad no se activa a espaldas de
+quien compila.
 
 ---
 
@@ -389,13 +422,23 @@ binario en el repositorio: así se puede leer y cambiar de color en una línea.
 | `npm run validate` | las tres validaciones de abajo |
 | `npm run validate:levels` | trazados jugables, y que cada arquetipo reciba los nodos que pide |
 | `npm run validate:puzzles` | que cada arquetipo **se pueda resolver**, y que su restricción no se pueda saltar |
-| `npm run validate:achievements` | que las definiciones —las del paquete y las de la base de datos— se puedan evaluar y cumplir |
+| `npm run validate:achievements` | que las definiciones —las del paquete y las de la base de datos— se puedan evaluar, cumplir y reflejarse en Steam |
 | `npm run test:e2e` | juego real en Chrome: solo, dúo y reconexión (requiere `npm run dev`) |
 | `npm run build` | que el grafo de módulos del cliente resuelve |
-| `npm run dist:linux` / `dist:win` | instalable de escritorio |
+| `npm run dist:linux` / `dist:win` / `dist:mac` | paquete de escritorio, ver [DISTRIBUTION.md](DISTRIBUTION.md) |
 | `curl localhost:3001/api/health` | que el servidor sirve desde Postgres y no desde el respaldo |
 
 `validate:levels` verifica el trazado; `validate:puzzles` verifica la **regla**. Hacen falta
 las dos: un arquetipo cuya condición de victoria nunca se cumpla dejaría al jugador
 encerrado en una sala perfectamente jugable, que es el peor fallo posible — no hay error, no
 hay aviso, simplemente no se puede salir.
+
+`validate:achievements` distingue dos gravedades y falla con ambas, aunque el servidor no:
+una definición que **no se puede evaluar** se descarta al cargar, mientras que un icono
+desconocido o un nombre de Steam mal formado solo se avisan —el logro funciona igual y
+tirarlo entero le quitaría al jugador algo que sí sirve—. En la máquina de quien mantiene el
+catálogo las dos cosas son erratas que hay que corregir.
+
+Lo que **ninguna comprobación puede hacer** es confirmar que un API Name existe de verdad en
+Steamworks: Steam descarta en silencio un nombre que no conoce. Eso hay que verlo una vez con
+el cliente de Steam abierto y un appid real.

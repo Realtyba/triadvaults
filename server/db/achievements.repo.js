@@ -37,6 +37,7 @@ function rowToDefinition(row) {
     description: { es: row.description_es, en: row.description_en },
     // `jsonb` ya llega convertido a array; el `|| []` cubre una fila manipulada a mano.
     conditions: Array.isArray(row.conditions) ? row.conditions : [],
+    steamApiName: row.steam_api_name || null,
     sortOrder: row.sort_order,
     enabled: row.enabled
   };
@@ -54,26 +55,37 @@ function rowToDefinition(row) {
  */
 export async function loadCatalogReport() {
   if (!isPgConnected()) {
-    return { catalog: sortCatalog(DEFAULT_ACHIEVEMENTS), problems: [], source: 'defaults' };
+    return {
+      catalog: sortCatalog(DEFAULT_ACHIEVEMENTS),
+      problems: [],
+      warnings: [],
+      source: 'defaults'
+    };
   }
 
   const res = await pool.query(
     `SELECT key, icon, title_es, title_en, description_es, description_en,
-            conditions, sort_order, enabled
+            conditions, steam_api_name, sort_order, enabled
        FROM ${CATALOG_TABLE}
       ORDER BY sort_order, key`
   );
 
   const catalog = [];
   const problems = [];
+  const warnings = [];
+
   for (const row of res.rows) {
     const definition = rowToDefinition(row);
-    const { valid, errors } = validateDefinition(definition);
+    const { valid, errors, warnings: warns } = validateDefinition(definition);
+
+    // Los avisos no impiden evaluar: la definición entra igual y solo se informa.
+    if (warns.length > 0) warnings.push({ key: definition.key, warnings: warns });
+
     if (valid) catalog.push(definition);
     else problems.push({ key: definition.key, errors });
   }
 
-  return { catalog, problems, source: 'postgres' };
+  return { catalog, problems, warnings, source: 'postgres' };
 }
 
 /**
@@ -84,10 +96,11 @@ export async function getCatalog({ force = false } = {}) {
   if (!force && cache && Date.now() - cachedAt < CATALOG_TTL_MS) return cache;
 
   try {
-    const { catalog, problems } = await loadCatalogReport();
+    const { catalog, problems, warnings } = await loadCatalogReport();
     problems.forEach(p =>
       console.error(`[logros] la definición "${p.key}" se ignora: ${p.errors.join('; ')}`)
     );
+    warnings.forEach(w => console.warn(`[logros] "${w.key}": ${w.warnings.join('; ')}`));
 
     // Un catálogo vacío en Postgres no se cachea como respuesta buena: significa
     // que la siembra no llegó a correr, y devolver una lista vacía durante un
@@ -128,8 +141,9 @@ export async function seedCatalog() {
     for (const def of DEFAULT_ACHIEVEMENTS) {
       await pool.query(
         `INSERT INTO ${CATALOG_TABLE}
-           (key, icon, title_es, title_en, description_es, description_en, conditions, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+           (key, icon, title_es, title_en, description_es, description_en, conditions,
+            steam_api_name, sort_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
          ON CONFLICT (key) DO NOTHING`,
         [
           def.key,
@@ -139,6 +153,7 @@ export async function seedCatalog() {
           def.description.es,
           def.description.en,
           JSON.stringify(def.conditions),
+          def.steamApiName || null,
           def.sortOrder ?? 100
         ]
       );

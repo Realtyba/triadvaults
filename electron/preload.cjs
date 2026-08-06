@@ -1,4 +1,4 @@
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 /**
  * Puente entre el proceso de render y el sistema.
@@ -14,5 +14,19 @@ const { contextBridge } = require('electron');
 contextBridge.exposeInMainWorld('triad', {
   isDesktop: true,
   platform: process.platform,
-  version: process.versions.electron
+  version: process.versions.electron,
+
+  /**
+   * Logros de Steam. Tres funciones enumeradas a mano y nada más: exponer
+   * `ipcRenderer` entero devolvería a la página la capacidad de hablar con cualquier
+   * canal del proceso principal, que es justo lo que el aislamiento evita.
+   *
+   * Fuera de Electron `window.triad` no existe, así que quien llame tiene que
+   * comprobarlo. El juego en navegador no se entera de nada de esto.
+   */
+  steam: {
+    isAvailable: () => ipcRenderer.invoke('steam:available'),
+    unlock: apiName => ipcRenderer.invoke('steam:unlock', apiName),
+    isUnlocked: apiName => ipcRenderer.invoke('steam:is-unlocked', apiName)
+  }
 });

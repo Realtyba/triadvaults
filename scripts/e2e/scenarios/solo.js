@@ -78,7 +78,18 @@ export async function runSolo(conn) {
   const loop = await ev(`(() => { window.__obs.disconnect();
     return { frames: window.__probe.frames, mutations: window.__probe.mutations,
              sameNode: window.__probe.node === document.querySelector('[data-ref="healthFill"]') }; })()`);
-  r.check(loop.frames > 30, `bucle a ~${Math.round(loop.frames / 1.5)} fps`, `el bucle apenas avanza (${loop.frames} frames)`);
+  // El umbral detecta un bucle **parado o al ralentí**, no mide rendimiento.
+  //
+  // Estaba en 30 fotogramas (20 fps) y fallaba en cualquier máquina sin GPU. Midiendo
+  // el reparto de un fotograma aquí: 0,46 ms es todo nuestro JavaScript —de los que
+  // 0,005 ms son leer el mando— y 47 ms se los lleva SwiftShader rasterizando por
+  // software. El 99 % del tiempo está fuera de nuestro código, así que como detector
+  // de regresiones de JavaScript esta cifra no vale para nada: haría falta empeorar
+  // el bucle cincuenta veces para moverla. Lo que sí distingue es un bucle vivo de
+  // uno muerto, y para eso 10 fps sobran.
+  //
+  // Lo que vigila de verdad la reconstrucción del HUD es la comprobación siguiente.
+  r.check(loop.frames > 15, `bucle vivo a ~${Math.round(loop.frames / 1.5)} fps`, `el bucle apenas avanza (${loop.frames} frames)`);
   r.check(loop.sameNode && loop.mutations <= 5,
     `HUD estable: mismo nodo tras ${loop.frames} frames, ${loop.mutations} mutaciones`,
     `el HUD se reconstruye (mismoNodo=${loop.sameNode}, ${loop.mutations} mutaciones)`);

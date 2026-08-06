@@ -179,7 +179,7 @@
   "hud_input_gamepad": "GAMEPAD",
   "server_online": "SERVER ONLINE",
   "server_offline": "SERVER OFFLINE",
-  "game_version": "v1.0.0",
+  "game_version": "v1.0.0-beta",
   "credits_label": "CREDITS",
   "credits_text": "Developed by the Triad Vaults team.",
   "inst_title_movement": "MOVEMENT",

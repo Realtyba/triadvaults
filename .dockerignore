@@ -5,6 +5,4 @@ dist
 docs
 electron
 scripts/e2e
-pnpm-lock.yaml
-pnpm-workspace.yaml
 *.md

@@ -1,0 +1,19 @@
+// Depot de Linux. Ver steam/app_build.vdf para el uso completo.
+//
+// Se sube `linux-unpacked/`, no el AppImage ni el .deb: para Steam esos dos formatos
+// sobran —Steam ya instala y parchea— y además un AppImage es un único fichero de
+// 100 MB, así que cualquier cambio obligaría a descargarlo entero en cada parche.
+// Con el directorio, SteamPipe solo manda lo que cambió.
+
+"DepotBuild"
+{
+    "DepotID"       "482"   // ⚠ marcador — el tuyo sale de Steamworks
+    "contentroot"   ""
+
+    "FileMapping"
+    {
+        "LocalPath"     "linux-unpacked/*"
+        "DepotPath"     "."
+        "recursive"     "1"
+    }
+}

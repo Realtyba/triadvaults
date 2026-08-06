@@ -1,7 +1,14 @@
-import { app, BrowserWindow, shell, screen } from 'electron';
+import { app, BrowserWindow, shell, screen, ipcMain } from 'electron';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { readFileSync, writeFileSync } from 'fs';
+import {
+  initSteam,
+  steamIsAvailable,
+  unlockAchievement,
+  achievementIsUnlocked,
+  enableSteamOverlay
+} from './steam.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -95,6 +102,22 @@ function createWindow() {
   return win;
 }
 
+/**
+ * Canales hacia Steam.
+ *
+ * Se registran siempre, haya Steam o no: el render pregunta lo mismo en los dos
+ * casos y recibe `false`, en lugar de tener que averiguar si el canal existe.
+ */
+function registerSteamBridge() {
+  ipcMain.handle('steam:available', () => steamIsAvailable());
+  ipcMain.handle('steam:unlock', (event, apiName) => unlockAchievement(apiName));
+  ipcMain.handle('steam:is-unlocked', (event, apiName) => achievementIsUnlocked(apiName));
+}
+
+// El overlay va antes que nada: añade conmutadores de línea de órdenes, y esos ya no
+// se leen una vez la aplicación está lista.
+enableSteamOverlay();
+
 // Una segunda instancia no debe abrir otra ventana: enfoca la que ya está.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -108,6 +131,11 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    // Antes de la ventana: así el render ya encuentra el puente montado en cuanto
+    // pregunta, y no hay una carrera entre el arranque del juego y el de Steam.
+    initSteam();
+    registerSteamBridge();
+
     createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

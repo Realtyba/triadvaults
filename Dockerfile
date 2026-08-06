@@ -1,19 +1,21 @@
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
+RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY . .
-RUN npx vite build
+RUN pnpm exec vite build
 
 # --- Imagen de producción ---
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 
 # Solo dependencias de producción
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod
 
 # El build del cliente
 COPY --from=build /app/dist ./dist
@@ -23,6 +25,9 @@ COPY server ./server
 COPY shared ./shared
 COPY migrations ./migrations
 COPY scripts ./scripts
+
+# server/mailer.js lee las plantillas de email localizadas de aquí
+COPY src/locales ./src/locales
 
 EXPOSE 3001
 

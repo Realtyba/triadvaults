@@ -2,8 +2,19 @@ node_modules/
 .env
 dist/
 .DS_Store
+Thumbs.db
+*.log
 
 # Salidas del empaquetado de escritorio. `build/` también se genera: el icono lo
 # produce `npm run icon` a partir de scripts/make-icon.js, que sí está versionado.
 release/
 build/
+
+# Appid de Steam para probar sin lanzar desde el cliente. Es un dato de la cuenta de
+# Steamworks de quien publica, no del proyecto.
+steam_appid.txt
+
+# El proyecto corre con pnpm (ver pnpm-workspace.yaml); pnpm-lock.yaml es el lockfile
+# real y el único que se mantiene al día. package-lock.json queda obsoleto en cuanto
+# se genera (npm no lo actualiza) y confunde sobre cuál manda.
+package-lock.json

@@ -179,7 +179,7 @@
   "hud_input_gamepad": "MANDO",
   "server_online": "SERVIDOR EN LÍNEA",
   "server_offline": "SERVIDOR DESCONECTADO",
-  "game_version": "v1.0.0",
+  "game_version": "v1.0.0-beta",
   "credits_label": "CRÉDITOS",
   "credits_text": "Desarrollado por el equipo de Triad Vaults.",
   "inst_title_movement": "MOVIMIENTO",

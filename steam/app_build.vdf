@@ -1,0 +1,29 @@
+// Plantilla de subida a Steam (SteamPipe).
+//
+// ⚠ Los números de aquí son MARCADORES. El appid y los depots salen de tu cuenta de
+// Steamworks y no pueden estar en el repositorio, porque son de quien publica.
+//
+// Uso, con steamcmd:
+//   steamcmd +login <usuario> +run_app_build /ruta/absoluta/a/steam/app_build.vdf +quit
+//
+// SteamPipe sube DIRECTORIOS, no instaladores: por eso los depots apuntan a
+// `release/win-unpacked` y `release/linux-unpacked` y no al .exe ni al AppImage.
+// Steam se encarga de instalar y de parchear, así que el instalador NSIS solo hace
+// falta para distribuir fuera de Steam. Ver docs/DISTRIBUTION.md.
+
+"appbuild"
+{
+    "appid"     "480"           // ⚠ marcador — 480 es Spacewar, el appid de pruebas de Valve
+    "desc"      "Triad Vaults"  // se ve en el historial de builds de Steamworks
+    "buildoutput" "../release/steam-build"  // registros y manifiestos que genera SteamPipe
+    "contentroot" "../release"             // raíz desde la que se resuelven los depots
+    "setlive"   ""              // vacío a propósito: subir no debe publicar solo.
+                                // Se pasa a vivo a mano desde Steamworks, o poniendo
+                                // aquí el nombre de una rama (p. ej. "beta").
+
+    "depots"
+    {
+        "481"   "depot_win.vdf"     // ⚠ marcador
+        "482"   "depot_linux.vdf"   // ⚠ marcador
+    }
+}

@@ -85,9 +85,19 @@ function checkCatalog(label, catalog) {
     return;
   }
 
+  // Se cuentan los fallos de ESTE catálogo. Con el contador global, el segundo
+  // bloque no habría dicho nunca "correcto" en cuanto el primero fallara una vez.
+  const before = failures;
+
   const seen = new Set();
   for (const definition of catalog) {
-    const { valid, errors } = validateDefinition(definition);
+    const { valid, errors, warnings } = validateDefinition(definition);
+
+    // El servidor sigue adelante con un aviso —el logro se puede evaluar igual—,
+    // pero aquí cuenta como fallo: esto lo ejecuta quien mantiene el catálogo, y un
+    // nombre de Steam mal escrito no da ninguna otra señal de que está mal.
+    warnings.forEach(w => fail(`"${definition.key}": ${w}`));
+
     if (!valid) {
       fail(`"${definition.key}": ${errors.join('; ')}`);
       continue;
@@ -102,7 +112,7 @@ function checkCatalog(label, catalog) {
     }
   }
 
-  if (failures === 0) console.log('  ✓ todas se pueden evaluar y cumplir');
+  if (failures === before) console.log('  ✓ todas se pueden evaluar, cumplir y reflejarse en Steam');
 }
 
 console.log('Catálogo de logros\n');

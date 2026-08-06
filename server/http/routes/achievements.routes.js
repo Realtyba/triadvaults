@@ -18,11 +18,15 @@ achievementsRouter.get('/', async (req, res) => {
 
   res.json({
     success: true,
-    catalog: catalog.map(({ key, icon, title, description, sortOrder }) => ({
+    // `steamApiName` sí viaja: lo necesita el cliente de escritorio para decirle a
+    // Steam qué logro reflejar. No es un secreto —está en la ficha pública del
+    // juego— y quien decide concederlo sigue siendo el servidor.
+    catalog: catalog.map(({ key, icon, title, description, steamApiName, sortOrder }) => ({
       key,
       icon,
       title,
       description,
+      steamApiName,
       sortOrder
     }))
   });

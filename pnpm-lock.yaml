@@ -51,6 +51,10 @@ importers:
       vite:
         specifier: ^5.3.4
         version: 5.4.21(@types/node@26.1.2)
+    optionalDependencies:
+      steamworks.js:
+        specifier: 0.4.0
+        version: 0.4.0
 
 packages:
 
@@ -1638,6 +1642,10 @@ packages:
     resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
     engines: {node: '>= 0.8'}
 
+  steamworks.js@0.4.0:
+    resolution: {integrity: sha512-O5TTRs7ucCRql4IA/kYUIQYeghTsXqf3rAm81sC22RDId264LQYqQjuaMEUSqL60I5LdULiGu0W2/A+ZDcKBKA==}
+    engines: {node: '>= 14'}
+
   string-width@4.2.3:
     resolution: {integrity: sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==}
     engines: {node: '>=8'}
@@ -2173,7 +2181,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 20.19.43
+      '@types/node': 26.1.2
       '@types/responselike': 1.0.3
 
   '@types/cors@2.8.19':
@@ -2194,7 +2202,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.1.2
 
   '@types/ms@2.1.0': {}
 
@@ -2208,7 +2216,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.1.2
 
   '@types/ws@8.18.1':
     dependencies:
@@ -2216,7 +2224,7 @@ snapshots:
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.1.2
     optional: true
 
   '@xmldom/xmldom@0.8.13': {}
@@ -3599,6 +3607,11 @@ snapshots:
   stat-mode@1.0.0: {}
 
   statuses@2.0.2: {}
+
+  steamworks.js@0.4.0:
+    dependencies:
+      '@types/node': 26.1.2
+    optional: true
 
   string-width@4.2.3:
     dependencies:

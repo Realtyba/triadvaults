@@ -29,6 +29,9 @@ files:
   - electron/**/*
   - package.json
   - '!node_modules/**/*'
+  # Reincluido DESPUÉS de la exclusión, que es lo único que la deshace: el puente
+  # con Steam sí necesita su módulo nativo dentro del paquete.
+  - 'node_modules/steamworks.js/**/*'
 
 # El servidor NO se empaqueta. El juego de escritorio es el cliente: en solitario
 # corre entero en local (ver `OfflineStore`), y para jugar acompañado se conecta al
@@ -36,8 +39,15 @@ files:
 # instalable obligaría a cada jugador a levantar una base de datos para jugar solo.
 
 asar: true
-# `.map` fuera: son la mitad del peso y solo sirven para depurar el código propio.
-asarUnpack: []
+
+# Lo que queda FUERA del archivo asar. Un `.node` no se puede cargar desde dentro:
+# el sistema operativo necesita un fichero de verdad en el disco para enlazarlo, y
+# el asar es un único blob. Sin esto, `require('steamworks.js')` falla en la build
+# empaquetada —y solo ahí, nunca en desarrollo—, que es la peor clase de fallo.
+# Las bibliotecas de Steam (`libsteam_api.so`, `steam_api64.dll`) van con ellos por
+# el mismo motivo: el `.node` las carga en tiempo de ejecución.
+asarUnpack:
+  - 'node_modules/steamworks.js/dist/**'
 
 # Construir el instalador de Windows DESDE Linux necesita `wine` en el sistema; sin
 # él, `npm run dist:win` falla con "spawn wine ENOENT". Desde Windows no hace falta
@@ -48,6 +58,16 @@ win:
       arch: [x64]
   icon: build/icon.png
 
+# Firma de código: preparada y APAGADA. Sin certificados no se firma nada, y no se
+# van a inventar. Cuando existan, electron-builder los toma del entorno sin tocar
+# este fichero: CSC_LINK + CSC_KEY_PASSWORD en Windows, y en macOS APPLE_ID +
+# APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID para notarizar.
+#
+# Lo que cuesta no firmar: en Windows, SmartScreen avisa de "editor desconocido" y
+# hay que pulsar dos veces para instalar; en macOS, Gatekeeper directamente se niega
+# a abrirlo. Por Steam esto no importa —Steam distribuye por su cuenta—, fuera de
+# Steam sí. Ver docs/DISTRIBUTION.md.
+
 nsis:
   oneClick: false
   perMachine: false
@@ -55,6 +75,20 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Triad Vaults
+
+# macOS solo se puede compilar DESDE macOS: la cadena de herramientas de Apple no
+# existe en otros sistemas. Esta configuración está escrita pero sin probar, y así se
+# dice en docs/DISTRIBUTION.md en lugar de darla por buena.
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip # el formato que espera Steam para un depot de macOS
+      arch: [x64, arm64]
+  icon: build/icon.png
+  category: public.app-category.games
+  # Obligatorio para poder notarizar. Sin notarizar, Gatekeeper no lo abre.
+  hardenedRuntime: true
 
 linux:
   target:

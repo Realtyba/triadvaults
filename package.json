@@ -17,9 +17,14 @@
     "migrate": "node migrations/migrate.js",
     "start": "electron .",
     "icon": "node scripts/make-icon.js",
+    "predist": "rm -rf release",
+    "predist:win": "rm -rf release",
+    "predist:linux": "rm -rf release",
+    "predist:mac": "rm -rf release",
     "dist": "npm run icon && npm run build && electron-builder --publish never",
     "dist:win": "npm run icon && npm run build && electron-builder --win --publish never",
     "dist:linux": "npm run icon && npm run build && electron-builder --linux --publish never",
+    "dist:mac": "npm run icon && npm run build && electron-builder --mac --publish never",
     "validate:levels": "node scripts/validate-levels.js",
     "validate:puzzles": "node scripts/validate-puzzles.js",
     "validate:achievements": "node scripts/validate-achievements.js",
@@ -43,5 +48,8 @@
     "electron": "^31.2.0",
     "electron-builder": "26.15.3",
     "vite": "^5.3.4"
+  },
+  "optionalDependencies": {
+    "steamworks.js": "0.4.0"
   }
 }

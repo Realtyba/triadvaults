@@ -38,6 +38,7 @@
  * @property {{es: string, en: string}} title
  * @property {{es: string, en: string}} description
  * @property {AchievementCondition[]} conditions
+ * @property {string} [steamApiName] logro equivalente en Steamworks, si lo hay
  * @property {number} [sortOrder]
  * @property {boolean} [enabled]
  */
@@ -81,12 +82,20 @@ const MAX_KEY_LENGTH = 50;
 const KEY_PATTERN = /^[a-z0-9_]+$/;
 
 /**
+ * Formato del "API Name" de un logro en Steamworks: mayúsculas, dígitos y guion bajo.
+ * Steam no valida nada al recibirlo —un nombre que no exista allí se descarta en
+ * silencio— así que el formato se comprueba aquí o no se comprueba en ningún sitio.
+ */
+const STEAM_NAME_PATTERN = /^[A-Z0-9_]{1,64}$/;
+
+/**
  * Catálogo inicial. Siembra la tabla la primera vez y hace de catálogo cuando no
  * hay Postgres. A partir de la siembra, la fuente de verdad es la base de datos.
  */
 export const DEFAULT_ACHIEVEMENTS = [
   {
     key: 'first_escape',
+    steamApiName: 'FIRST_ESCAPE',
     icon: 'bolt',
     sortOrder: 10,
     title: { es: 'Primera Fuga', en: 'First Escape' },
@@ -95,6 +104,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'level_10',
+    steamApiName: 'LEVEL_10',
     icon: 'trophy',
     sortOrder: 20,
     title: { es: 'Agente de Campo', en: 'Field Agent' },
@@ -103,6 +113,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'level_25',
+    steamApiName: 'LEVEL_25',
     icon: 'trophy',
     sortOrder: 30,
     title: { es: 'Operativo Veterano', en: 'Veteran Operative' },
@@ -111,6 +122,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'level_50',
+    steamApiName: 'LEVEL_50',
     icon: 'trophy',
     sortOrder: 40,
     title: { es: 'Leyenda de la Bóveda', en: 'Vault Legend' },
@@ -119,6 +131,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'flawless',
+    steamApiName: 'FLAWLESS',
     icon: 'shield',
     sortOrder: 50,
     title: { es: 'Intachable', en: 'Untouched' },
@@ -130,6 +143,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'speedrun',
+    steamApiName: 'SPEEDRUN',
     icon: 'bolt',
     sortOrder: 60,
     title: { es: 'Contrarreloj', en: 'Against the Clock' },
@@ -146,6 +160,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'full_squad',
+    steamApiName: 'FULL_SQUAD',
     icon: 'user',
     sortOrder: 70,
     title: { es: 'Escuadrón Completo', en: 'Full Squad' },
@@ -157,6 +172,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'centurion',
+    steamApiName: 'CENTURION',
     icon: 'trophy',
     sortOrder: 80,
     title: { es: 'Centurión', en: 'Centurion' },
@@ -165,6 +181,7 @@ export const DEFAULT_ACHIEVEMENTS = [
   },
   {
     key: 'survivor',
+    steamApiName: 'SURVIVOR',
     icon: 'shield',
     sortOrder: 90,
     title: { es: 'Superviviente', en: 'Survivor' },
@@ -179,19 +196,29 @@ export const DEFAULT_ACHIEVEMENTS = [
 // ------------------------------------------------------------------ validación
 
 /**
- * Comprueba que una definición se puede evaluar.
+ * Comprueba una definición del catálogo.
  *
  * Es la red que sustituye a la revisión de código que había cuando el catálogo era
  * un fichero. Una fila con una métrica mal escrita no fallaría al insertarse: el
- * logro simplemente no se concedería nunca y nadie se enteraría. Por eso el
- * repositorio valida al cargar y `npm run validate:achievements` valida el catálogo
- * vivo.
+ * logro simplemente no se concedería nunca y nadie se enteraría.
+ *
+ * Se distinguen dos gravedades, y la diferencia importa:
+ *
+ * - **`errors`** impiden evaluar el logro. El repositorio descarta esas filas al
+ *   cargar, porque un logro que no se puede evaluar no puede conceder nada.
+ * - **`warnings`** no tocan la evaluación: un icono desconocido se dibuja con el de
+ *   reserva, y un nombre de Steam mal formado solo rompe el reflejo en Steam. Tirar
+ *   el logro entero por eso sería quitarle al jugador algo que sí funciona.
+ *
+ * `npm run validate:achievements` falla con las dos: en la máquina de quien lo
+ * mantiene, ambas son erratas que hay que corregir.
  *
  * @param {AchievementDefinition} definition
- * @returns {{valid: boolean, errors: string[]}}
+ * @returns {{valid: boolean, errors: string[], warnings: string[]}}
  */
 export function validateDefinition(definition) {
   const errors = [];
+  const warnings = [];
   const def = definition || {};
 
   if (typeof def.key !== 'string' || !KEY_PATTERN.test(def.key)) {
@@ -204,7 +231,14 @@ export function validateDefinition(definition) {
   if (!def.description || !def.description.es) errors.push('falta la descripción en español');
 
   if (def.icon && !ACHIEVEMENT_ICONS.includes(def.icon)) {
-    errors.push(`icono "${def.icon}" desconocido (se dibujará "${FALLBACK_ICON}")`);
+    warnings.push(`icono "${def.icon}" desconocido: se dibujará "${FALLBACK_ICON}"`);
+  }
+
+  if (def.steamApiName && !STEAM_NAME_PATTERN.test(def.steamApiName)) {
+    warnings.push(
+      `nombre de Steam "${def.steamApiName}" mal formado (mayúsculas, dígitos y _): ` +
+        'el logro funciona, pero no se reflejará en Steam'
+    );
   }
 
   if (!Array.isArray(def.conditions) || def.conditions.length === 0) {
@@ -224,7 +258,7 @@ export function validateDefinition(definition) {
     });
   }
 
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors, warnings };
 }
 
 // ------------------------------------------------------------------ evaluación

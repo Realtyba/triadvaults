@@ -1,7 +1,6 @@
 import { pool, isPgConnected } from './pool.js';
 import { readUsers, writeUsers } from './jsonStore.js';
 import { hashPassword, generatePin } from './passwords.js';
-import { sendRecoveryPin } from '../mailer.js';
 
 export async function requestPasswordReset(email) {
   const cleanEmail = String(email).trim().toLowerCase();
@@ -17,8 +16,7 @@ export async function requestPasswordReset(email) {
         return { success: false, error: 'No existe ninguna cuenta registrada con este correo.' };
       }
       const { username } = res.rows[0];
-      await sendRecoveryPin(cleanEmail, resetCode, username);
-      return { success: true, username };
+      return { success: true, user: { username, email: cleanEmail }, resetCode };
     } catch (err) {
       console.error('[recovery.repo] requestPasswordReset:', err.message);
       return { success: false, error: 'Error al solicitar el PIN de recuperación.' };
@@ -31,8 +29,7 @@ export async function requestPasswordReset(email) {
 
   users[key].resetCode = resetCode;
   writeUsers(users);
-  await sendRecoveryPin(cleanEmail, resetCode, users[key].username);
-  return { success: true, username: users[key].username };
+  return { success: true, user: { username: users[key].username, email: cleanEmail }, resetCode };
 }
 
 export async function resetPassword(email, resetCode, newPassword) {

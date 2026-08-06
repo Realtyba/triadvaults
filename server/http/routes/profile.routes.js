@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { DatabaseManager } from '../../db/index.js';
-import { sendVerificationPin, devPinEchoEnabled } from '../../mailer.js';
+import { sendMailTemplate, devPinEchoEnabled } from '../../mailer.js';
 import { authenticateHTTP, signUserToken } from '../middleware/auth.js';
 
 export const profileRouter = Router();
@@ -32,7 +32,8 @@ profileRouter.post('/update', authenticateHTTP, async (req, res) => {
   if (result.emailChanged && result.newCode) {
     // Si el envío falla, el correo nuevo quedaría sin poder verificarse nunca.
     // Ver `deliverPin` en auth.routes.js.
-    const sent = await sendVerificationPin(newEmail, result.newCode, result.username);
+    const lang = req.headers['accept-language'] || 'es';
+    const sent = await sendMailTemplate(newEmail, 'verification', lang, { username: result.username, code: result.newCode });
     if (!sent) {
       console.warn(`[MAILER] No se pudo enviar el correo de verificación a ${newEmail}.`);
     }

@@ -138,11 +138,11 @@ export class AuthController {
   async verify() {
     const pin = this.form.get('verifyPin').trim();
     const user = this.store.get().user;
-    if (pin.length !== 6) return this.store.patch({ verifyMessage: this.t('error_pin_length') });
+    if (pin.length !== 6) return this.setVerifyError(this.t('error_pin_length'));
 
-    this.store.patch({ verifyMessage: this.t('status_verifying') });
+    this.setVerifyError(this.t('status_verifying'));
     const res = await this.api.verifyEmail(user.username, pin);
-    if (!res.success) return this.store.patch({ verifyMessage: res.error });
+    if (!res.success) return this.setVerifyError(res.error);
 
     const updated = session.patchUser({ isVerified: true });
     this.form.clear('verifyPin');
@@ -158,31 +158,48 @@ export class AuthController {
   async resendPin() {
     if (this.store.get().resendCooldown > 0) return;
 
-    this.store.patch({ verifyMessage: this.t('status_sending_pin') });
+    this.setVerifyError(this.t('status_sending_pin'));
     const res = await this.api.resendVerification();
 
     if (!res.success) {
-      this.store.patch({ verifyMessage: res.error });
+      this.setVerifyError(res.error);
       if (res.retryAfter) this.startResendCooldown(res.retryAfter);
       return;
     }
 
-    this.store.patch({
-      verifyMessage: this.t('verify_new_code_sent'),
-      verifyDevCode: res.devCode || null
-    });
-    this.startResendCooldown(res.cooldown || 60);
+    this.setVerifyError(this.t('verify_new_code_sent'));
+    this.startResendCooldown(res.cooldown || 120);
   }
 
-  /** Cuenta atrás visible del reenvío, para que el botón no parezca roto. */
+  setVerifyError(msg) {
+    const el = document.querySelector('.modal__error');
+    if (el) el.textContent = msg;
+  }
+
+  /** Cuenta atrás visible del reenvío, para que el botón no parezca roto, sin repintar toda la interfaz. */
   startResendCooldown(seconds) {
     clearInterval(this.resendTimer);
-    this.store.patch({ resendCooldown: Math.ceil(seconds) });
+    let remaining = Math.ceil(seconds);
+    this.store.patch({ resendCooldown: remaining });
 
     this.resendTimer = setInterval(() => {
-      const remaining = this.store.get().resendCooldown - 1;
-      this.store.patch({ resendCooldown: Math.max(0, remaining) });
-      if (remaining <= 0) clearInterval(this.resendTimer);
+      remaining -= 1;
+      
+      const btn = document.querySelector('[data-action="profile:resend-pin"]');
+      if (btn) {
+        if (remaining > 0) {
+          btn.disabled = true;
+          btn.textContent = this.t('btn_resend_pin_wait').replace('{0}', remaining);
+        } else {
+          btn.disabled = false;
+          btn.textContent = this.t('btn_resend_pin');
+        }
+      }
+
+      if (remaining <= 0) {
+        clearInterval(this.resendTimer);
+        this.store.patch({ resendCooldown: 0 });
+      }
     }, 1000);
   }
 

@@ -67,7 +67,15 @@ export class UIManager {
 
     // El catálogo no depende de tener sesión: se pide siempre.
     this.fetchAchievementCatalog();
-    if (this.store.get().user) this.refreshMenuData();
+    
+    const user = this.store.get().user;
+    if (user) {
+      if (user.isVerified === false) {
+        this.store.patch({ modal: 'verify', view: 'main' });
+      } else {
+        this.refreshMenuData();
+      }
+    }
   }
 
   // ------------------------------------------------------------ montaje

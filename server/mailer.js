@@ -1,4 +1,18 @@
 import nodemailer from 'nodemailer';
+import fs from 'fs';
+
+const es = JSON.parse(fs.readFileSync(new URL('../src/locales/es.json', import.meta.url)));
+const en = JSON.parse(fs.readFileSync(new URL('../src/locales/en.json', import.meta.url)));
+const dicts = { es, en };
+
+function t(lang, key, ...args) {
+  const dict = dicts[lang] || dicts.es;
+  let text = dict[key] || dicts.es[key] || key;
+  args.forEach((arg, i) => {
+    text = text.replace(`{${i}}`, arg);
+  });
+  return text;
+}
 
 let transporter = null;
 
@@ -37,86 +51,80 @@ export function devPinEchoEnabled() {
   return process.env.NODE_ENV !== 'production' && process.env.AUTH_DEV_ECHO_PIN === 'true';
 }
 
-export const sendRecoveryPin = async (email, resetCode, username) => {
+export const sendMailTemplate = async (email, templateName, lang, data) => {
   if (!mailerIsConfigured()) {
-    console.warn(`[MAILER] Correo no enviado (sin credenciales SMTP). PIN recuperación: ${resetCode}`);
+    console.warn(`[MAILER] Correo no enviado (sin SMTP). Plantilla: ${templateName}, PIN: ${data.code}`);
     return false;
   }
+
+  const { username, code } = data;
+  
+  let subjectKey = '';
+  let greetingKey = '';
+  let bodyKey = '';
+  let pinLabelKey = '';
+  let footerKey = '';
+
+  if (templateName === 'verification') {
+    subjectKey = 'email_verification_subject';
+    greetingKey = 'email_verification_greeting';
+    bodyKey = 'email_verification_body';
+    pinLabelKey = 'email_verification_pin_label';
+    footerKey = 'email_verification_footer';
+  } else if (templateName === 'recovery') {
+    subjectKey = 'email_recovery_subject';
+    greetingKey = 'email_recovery_greeting';
+    bodyKey = 'email_recovery_body';
+    pinLabelKey = 'email_recovery_pin_label';
+    footerKey = 'email_recovery_footer';
+  } else {
+    return false;
+  }
+
+  const subject = t(lang, subjectKey);
+  const greeting = t(lang, greetingKey, username);
+  const body = t(lang, bodyKey);
+  const pinLabel = t(lang, pinLabelKey);
+  const footer = t(lang, footerKey);
+  const signature = t(lang, 'email_signature');
+
+  const textContent = `${greeting}\n\n${body}\n\n${pinLabel} ${code}\n\n${footer}\n\n${signature}`;
+
+  const htmlContent = `
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 30px; border: 1px solid #eaeaea; border-radius: 8px;">
+      <h2 style="color: #333333; text-align: center;">${subject}</h2>
+      <p style="color: #555555; font-size: 16px;">${greeting}</p>
+      <p style="color: #555555; font-size: 16px;">${body}</p>
+      
+      <div style="text-align: center; margin: 30px 0;">
+        <p style="color: #777777; font-size: 14px; text-transform: uppercase; margin-bottom: 10px;">${pinLabel}</p>
+        <div style="display: inline-block; background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 15px 40px; font-size: 32px; font-weight: bold; color: ${templateName === 'verification' ? '#28a745' : '#007bff'}; letter-spacing: 4px; border-radius: 6px;">
+          ${code}
+        </div>
+      </div>
+      
+      <p style="color: #555555; font-size: 14px; text-align: center;">${footer}</p>
+      
+      <div style="border-top: 1px solid #eaeaea; margin-top: 30px; padding-top: 20px; text-align: center;">
+        <p style="color: #999999; font-size: 12px;">${signature}</p>
+      </div>
+    </div>
+  `;
 
   const mailOptions = {
     from: process.env.SMTP_FROM || '"Triad Vaults" <noreply@triadvaults.com>',
     to: email,
-    subject: 'Recuperación de Acceso de Agente - Triad Vaults',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b1021; padding: 20px; border: 1px solid #00f3ff; border-radius: 8px;">
-        <h2 style="color: #00f3ff; text-align: center; text-transform: uppercase;">Protocolo de Recuperación</h2>
-        <p style="color: #a0aec0; font-size: 16px;">Agente <strong>${username}</strong>,</p>
-        <p style="color: #a0aec0; font-size: 16px;">Se ha solicitado un restablecimiento de credenciales para tu perfil en la Nube Central.</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <p style="color: #ffaa00; font-size: 14px; text-transform: uppercase; margin-bottom: 5px;">Tu PIN de Autorización:</p>
-          <div style="display: inline-block; background-color: rgba(0, 243, 255, 0.1); border: 2px solid #00f3ff; padding: 15px 30px; font-size: 32px; font-weight: bold; color: #ffffff; letter-spacing: 5px; border-radius: 4px;">
-            ${resetCode}
-          </div>
-        </div>
-        
-        <p style="color: #a0aec0; font-size: 14px;">Ingresa este PIN en la terminal del juego junto con tu nueva contraseña. Si no solicitaste este cambio, ignora esta alerta.</p>
-        
-        <div style="border-top: 1px solid rgba(0, 243, 255, 0.2); margin-top: 30px; padding-top: 15px; text-align: center;">
-          <p style="color: #666; font-size: 12px;">Transmisión automatizada desde la Nube de Agentes Triad Vaults.</p>
-        </div>
-      </div>
-    `
+    subject,
+    text: textContent,
+    html: htmlContent
   };
 
   try {
     await getTransporter().sendMail(mailOptions);
-    console.log(`[MAILER] Correo de recuperación enviado a ${email}`);
+    console.log(`[MAILER] Correo '${templateName}' enviado a ${email} (${lang || 'es'})`);
     return true;
   } catch (error) {
     console.error(`[MAILER] No se pudo enviar a ${email}: ${error.message}`);
-    return false;
-  }
-};
-
-export const sendVerificationPin = async (email, code, username) => {
-  if (!mailerIsConfigured()) {
-    console.warn(`[MAILER] Correo no enviado (sin credenciales SMTP). PIN verificación: ${code}`);
-    return false;
-  }
-
-  const mailOptions = {
-    from: process.env.SMTP_FROM || '"Triad Vaults" <noreply@triadvaults.com>',
-    to: email,
-    subject: 'Verifica tu Correo de Agente - Triad Vaults',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b1021; padding: 20px; border: 1px solid #00ff66; border-radius: 8px;">
-        <h2 style="color: #00ff66; text-align: center; text-transform: uppercase;">Confirmación de Enlace</h2>
-        <p style="color: #a0aec0; font-size: 16px;">Bienvenido Agente <strong>${username}</strong>,</p>
-        <p style="color: #a0aec0; font-size: 16px;">Para activar tu perfil en la Nube Central y poder acceder a las Salas, debes verificar este correo.</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <p style="color: #ffaa00; font-size: 14px; text-transform: uppercase; margin-bottom: 5px;">Tu PIN de Verificación:</p>
-          <div style="display: inline-block; background-color: rgba(0, 255, 102, 0.1); border: 2px solid #00ff66; padding: 15px 30px; font-size: 32px; font-weight: bold; color: #ffffff; letter-spacing: 5px; border-radius: 4px;">
-            ${code}
-          </div>
-        </div>
-        
-        <p style="color: #a0aec0; font-size: 14px;">Ingresa este PIN en tu interfaz de Agente para continuar. Si no creaste esta cuenta, ignora esta alerta.</p>
-        
-        <div style="border-top: 1px solid rgba(0, 255, 102, 0.2); margin-top: 30px; padding-top: 15px; text-align: center;">
-          <p style="color: #666; font-size: 12px;">Transmisión automatizada desde la Nube de Agentes Triad Vaults.</p>
-        </div>
-      </div>
-    `
-  };
-
-  try {
-    await getTransporter().sendMail(mailOptions);
-    console.log(`[MAILER] Correo de verificación enviado a ${email}`);
-    return true;
-  } catch (error) {
-    console.error(`[MAILER] No se pudo enviar la verificación a ${email}: ${error.message}`);
     return false;
   }
 };

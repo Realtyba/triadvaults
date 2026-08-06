@@ -99,7 +99,7 @@ export const MODALS = {
         <form data-action="profile:verify" data-submit>
           <input type="text" class="pin-input" data-field="verifyPin" maxlength="6" inputmode="numeric"
                  placeholder="${t('placeholder_pin')}" value="${esc(form.get('verifyPin'))}">
-          <p class="modal__error">${esc(state.verifyMessage)}</p>
+          <p class="modal__error"></p>
           <button type="submit" class="btn btn-success btn-block">${t('btn_verify')}</button>
         </form>
         <button type="button" class="btn btn-outline btn-sm btn-block" data-action="profile:resend-pin" ${waiting ? 'disabled' : ''}>

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { DatabaseManager } from '../../db/index.js';
-import { sendVerificationPin, devPinEchoEnabled } from '../../mailer.js';
+import { sendMailTemplate, devPinEchoEnabled } from '../../mailer.js';
 import { signUserToken, authenticateHTTP } from '../middleware/auth.js';
 
 export const authRouter = Router();
@@ -19,8 +19,8 @@ const registerLimiter = rateLimit({
   message: { success: false, error: 'Demasiadas cuentas creadas desde esta IP, por favor intenta más tarde.' }
 });
 
-/** Espera mínima entre reenvíos de PIN, por cuenta. */
-const RESEND_COOLDOWN_MS = 60_000;
+/** Espera mínima entre reenvíos de PIN, por cuenta. (2 minutos) */
+const RESEND_COOLDOWN_MS = 120_000;
 const lastResendAt = new Map();
 
 /**
@@ -34,10 +34,11 @@ const lastResendAt = new Map();
  * variables SMTP: unas credenciales de relleno pasan por configuradas y el envío
  * falla igual, dejando al jugador esperando un correo que no va a llegar.
  */
-async function deliverPin(payload, { email, code, username }) {
-  const sent = await sendVerificationPin(email, code, username);
-  if (!sent) {
-    console.warn(`[MAILER] No se pudo enviar el correo de verificación a ${email}.`);
+async function deliverPin(req, payload, { email, code, username }) {
+  const lang = req.headers['accept-language'] || 'es';
+  const sent = await sendMailTemplate(email, 'verification', lang, { username, code });
+  if (!sent && devPinEchoEnabled()) {
+    payload.devCode = code;
   }
   return payload;
 }
@@ -58,7 +59,7 @@ authRouter.post('/register', registerLimiter, async (req, res) => {
 
   result.token = signUserToken(result.user);
   if (result.verificationCode) {
-    await deliverPin(result, {
+    await deliverPin(req, result, {
       email: result.user.email,
       code: result.verificationCode,
       username: result.user.username
@@ -106,11 +107,14 @@ authRouter.post('/resend-verification', authenticateHTTP, async (req, res) => {
   const result = await DatabaseManager.regenerateVerificationCode(req.user.id);
   if (!result.success) return res.json(result);
 
-  lastResendAt.set(userId, Date.now());
+  const lang = req.headers['accept-language'] || 'es';
+  const sent = await sendMailTemplate(result.email, 'verification', lang, { username: result.username, code: result.code });
+  if (!sent && !devPinEchoEnabled()) {
+    return res.status(500).json({ success: false, error: 'No se pudo conectar con el servidor de correo. Intenta más tarde.' });
+  }
 
-  const payload = { success: true, cooldown: RESEND_COOLDOWN_MS / 1000 };
-  await deliverPin(payload, { email: result.email, code: result.code, username: result.username });
-  res.json(payload);
+  lastResendAt.set(userId, Date.now());
+  res.json({ success: true, cooldown: RESEND_COOLDOWN_MS / 1000 });
 });
 
 authRouter.post('/request-reset', async (req, res) => {
@@ -120,7 +124,11 @@ authRouter.post('/request-reset', async (req, res) => {
   }
   const result = await DatabaseManager.requestPasswordReset(email);
   if (result.success) {
+    const lang = req.headers['accept-language'] || 'es';
+    const sent = await sendMailTemplate(result.user.email, 'recovery', lang, { username: result.user.username, code: result.resetCode });
+    if (!sent && devPinEchoEnabled()) result.devCode = result.resetCode;
     delete result.resetCode; // El código se envía por correo, nunca se devuelve en la API.
+    delete result.user;
   }
   res.json(result);
 });

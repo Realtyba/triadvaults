@@ -15,7 +15,11 @@ export class ApiClient {
   }
 
   async request(path, { method = 'GET', body, auth = false } = {}) {
-    const headers = { 'Content-Type': 'application/json' };
+    const lang = localStorage.getItem('triad_lang') || 'es';
+    const headers = { 
+      'Content-Type': 'application/json',
+      'Accept-Language': lang
+    };
     if (auth) {
       const token = session.getToken();
       if (token) headers.Authorization = `Bearer ${token}`;

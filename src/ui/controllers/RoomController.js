@@ -9,6 +9,8 @@ export class RoomController {
   }
 
   create() {
+    if (!this.checkVerification()) return;
+
     this.socket.createRoom(res => {
       if (res && res.success) this.enterLobby(res.room);
       else this.ui.alert((res && res.error) || this.t('error_create_room'));
@@ -16,12 +18,16 @@ export class RoomController {
   }
 
   joinByCode() {
+    if (!this.checkVerification()) return;
+
     const code = this.form.get('roomCode').trim().toUpperCase();
     if (code.length !== 4) return this.ui.alert(this.t('error_invalid_room_code'));
     this.join(code);
   }
 
   join(code) {
+    if (!this.checkVerification()) return;
+
     this.socket.joinRoom(code, res => {
       if (!res || !res.success) {
         return this.ui.alert((res && res.error) || this.t('error_join_room'));
@@ -75,5 +81,14 @@ export class RoomController {
     } catch {
       // Sin permiso de portapapeles no pasa nada: el código está visible en pantalla.
     }
+  }
+
+  checkVerification() {
+    const user = this.store.get().user;
+    if (user && user.isVerified === false) {
+      this.store.patch({ modal: 'verify' });
+      return false;
+    }
+    return true;
   }
 }

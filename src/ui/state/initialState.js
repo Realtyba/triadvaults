@@ -1,4 +1,5 @@
 import { DEFAULT_ACHIEVEMENTS, sortCatalog } from '../../../shared/achievements.js';
+import { offlineStore } from '../../network/OfflineStore.js';
 
 /** Estado reactivo de la UI. Los valores de formularios NO viven aquí: ver `FormState`. */
 export function createInitialState({ user, lang, audioMuted, quality, qualityOptions, controls }) {
@@ -36,6 +37,10 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     // desde el primer fotograma y el modo sin conexión sigue teniendo metas.
     achievementCatalog: sortCatalog(DEFAULT_ACHIEVEMENTS),
     room: null,
+
+    // sin conexión
+    offline: false, // partida local en curso, sin servidor de por medio
+    offlinePending: offlineStore.pendingCount, // niveles sin red esperando a sincronizarse
 
     // conexión
     connection: 'online', // 'online' | 'reconnecting' | 'offline'

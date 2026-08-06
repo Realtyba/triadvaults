@@ -77,6 +77,9 @@ export class GameApp {
 
     this.level.build({ level, seed, seedOffset, playersCount: count });
     this.deathCount = 0;
+    // El daño del nivel lo lleva el servidor cuando hay sala; sin ella no hay quien
+    // lo cuente, y los logros de "sin recibir un golpe" necesitan saberlo.
+    this.levelDamage = 0;
     this.lastPuzzleSolved = false;
     this.running = true;
 
@@ -142,6 +145,7 @@ export class GameApp {
     const entity = this.players.get(uid);
     if (!entity) return;
 
+    const previousHealth = entity.health;
     const tookDamage = health < entity.health;
     entity.health = health;
     entity.setAlive(alive !== false && health > 0);
@@ -155,6 +159,7 @@ export class GameApp {
     if (String(uid) !== String(this.players.localUid)) return;
 
     if (tookDamage) {
+      this.levelDamage += Math.max(0, previousHealth - health);
       this.sound.playDamage();
       this.camera.addShake(0.55);
       this.renderer.flash(0.8, 0xff0033);
@@ -365,8 +370,20 @@ export class GameApp {
 
     if (result.solved && local && local.alive && this.level.isAtExit(local.getPosition())) {
       this.running = false;
-      this.socket.notifyLevelComplete(this.level.elapsedSeconds);
-      if (!this.socket.currentRoom) this.ui.showVictory();
+
+      // Con sala manda el servidor: él suma el progreso y responde con el siguiente
+      // nivel. Sin ella no hay nadie al otro lado, así que la partida se cierra aquí.
+      if (this.socket.currentRoom) {
+        this.socket.notifyLevelComplete(this.level.elapsedSeconds);
+        return;
+      }
+
+      this.ui.onOfflineLevelComplete({
+        level: this.level.level,
+        timeSpent: this.level.elapsedSeconds,
+        damageTaken: this.levelDamage,
+        deaths: this.deathCount
+      });
     }
   }
 }

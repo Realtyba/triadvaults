@@ -1,6 +1,5 @@
 import { EVENTS, GHOST_DAMAGE } from '../../../shared/events.js';
-import { evaluateAchievements } from '../../../shared/achievements.js';
-import { DatabaseManager } from '../../db/index.js';
+import { recordLevelCompletion } from '../../services/progression.js';
 import { broadcastAll } from '../broadcast.js';
 
 export function registerGameHandlers(io, socket, roomManager) {
@@ -51,61 +50,21 @@ export function registerGameHandlers(io, socket, roomManager) {
     // perfil a mitad de partida y entonces la escritura no encontraría su fila.
     for (const participant of participants) {
       const identity = { uid: participant.uid, name: participant.name };
-      const stats = await DatabaseManager.saveProgress(identity, completedLevel + 1, timeSpent);
-      if (!stats) continue;
-
-      io.to(participant.socketId).emit(EVENTS.USER_PROGRESS_UPDATED, stats);
-      await awardAchievements(io, identity, participant, {
+      const result = await recordLevelCompletion(identity, {
         level: completedLevel,
-        maxLevel: stats.maxLevelReached,
-        puzzlesSolved: stats.totalPuzzlesSolved,
-        totalTimePlayed: stats.totalTimePlayed,
         timeSpent,
-        playersCount
+        playersCount,
+        damageTaken: participant.damageTaken,
+        deaths: participant.deaths
       });
+      if (!result) continue;
+
+      io.to(participant.socketId).emit(EVENTS.USER_PROGRESS_UPDATED, result.stats);
+      if (result.unlocked.length > 0) {
+        io.to(participant.socketId).emit(EVENTS.ACHIEVEMENT_UNLOCKED, { keys: result.unlocked });
+      }
     }
   });
-
-  /**
-   * Evalúa y concede los logros del nivel recién superado.
-   *
-   * La evaluación es del servidor, nunca del cliente: los logros los ve todo el
-   * mundo en el ranking y en el perfil, así que dejar que el navegador decida
-   * cuáles se ha ganado sería regalarlos a quien abriera la consola.
-   *
-   * El catálogo se pide en cada evaluación —viene cacheado un minuto en el
-   * repositorio— para que un logro añadido en la base de datos entre en juego sin
-   * reiniciar el servidor.
-   */
-  async function awardAchievements(io, identity, participant, base) {
-    try {
-      const [owned, catalog] = await Promise.all([
-        DatabaseManager.listAchievements(identity),
-        DatabaseManager.getAchievementCatalog()
-      ]);
-      const unlocked = evaluateAchievements(
-        {
-          ...base,
-          flawless: participant.damageTaken === 0,
-          damageTaken: participant.damageTaken,
-          deaths: participant.deaths
-        },
-        catalog,
-        owned
-      );
-      if (unlocked.length === 0) return;
-
-      // `grantAchievements` devuelve solo lo que realmente insertó: si dos
-      // clientes de la sala reportan a la vez, el segundo no vuelve a avisar.
-      const granted = await DatabaseManager.grantAchievements(identity, unlocked);
-      if (granted.length > 0) {
-        io.to(participant.socketId).emit(EVENTS.ACHIEVEMENT_UNLOCKED, { keys: granted });
-      }
-    } catch (err) {
-      // Un fallo aquí no puede tumbar el avance de nivel del resto de la sala.
-      console.error('[logros] no se pudieron conceder:', err.message);
-    }
-  }
 
   socket.on(EVENTS.REGENERATE_LEVEL, (payload = {}) => {
     const room = authorize(payload.roomCode, { hostOnly: true });

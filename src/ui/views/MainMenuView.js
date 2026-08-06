@@ -17,6 +17,7 @@ export class MainMenuView {
       'user',
       'lang',
       'connection',
+      'offlinePending',
       ...AuthView.keys,
       ...ProfileView.keys,
       ...RoomBrowserView.keys,
@@ -48,6 +49,15 @@ export class MainMenuView {
         </div>
         <div data-region="profile"></div>
         <div data-region="auth"></div>
+
+        <!-- Siempre visible, con y sin sesión: es la vía de entrada para quien no
+             tiene cuenta, o la tiene pero no hay servidor al que conectarse. -->
+        <div class="offline-entry">
+          <button class="btn btn-outline btn-block" data-action="game:offline">
+            ${icon('bolt')} <span>${this.t('btn_play_offline')}</span>
+          </button>
+          <p class="offline-entry__hint" data-region="offline-hint">${this.t('offline_hint')}</p>
+        </div>
         <div class="menu-columns" data-region="columns">
           <div data-region="rooms"></div>
           <div data-region="rank"></div>
@@ -98,6 +108,16 @@ export class MainMenuView {
       if (dot) dot.classList.toggle('is-offline', offline);
       const label = statusEl.lastElementChild;
       if (label) label.textContent = this.t(offline ? 'server_offline' : 'server_online');
+    }
+
+    // Lo jugado sin red que aún no ha llegado al servidor: si el jugador no ve que
+    // hay algo pendiente, un progreso que tarda en aparecer parece progreso perdido.
+    const hint = this.root.querySelector('[data-region="offline-hint"]');
+    if (hint) {
+      hint.textContent =
+        state.offlinePending > 0
+          ? this.t('offline_pending').replace('{0}', state.offlinePending)
+          : this.t('offline_hint');
     }
 
     this.children.forEach(child => {

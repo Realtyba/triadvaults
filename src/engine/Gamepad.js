@@ -33,30 +33,44 @@ const PRESS_THRESHOLD = 0.5;
 export class GamepadInput {
   constructor() {
     this.name = null;
+    this.index = null;
     this.wasPressed = new Set();
     this.onConnectionChange = null;
 
     window.addEventListener('gamepadconnected', e => this.setConnected(e.gamepad));
-    window.addEventListener('gamepaddisconnected', () => this.setConnected(null));
+    window.addEventListener('gamepaddisconnected', e => {
+      if (this.index === e.gamepad.index) this.setConnected(null);
+    });
   }
 
   setConnected(pad) {
     this.name = pad ? pad.id : null;
+    this.index = pad ? pad.index : null;
     this.wasPressed.clear();
     if (this.onConnectionChange) this.onConnectionChange(this.name);
   }
 
   get isConnected() {
-    return this.name !== null;
+    return this.index !== null;
   }
 
-  /** Primer mando realmente conectado; los huecos vacíos del array se descartan. */
+  /**
+   * Mando activo, o `null` si no hay ninguno.
+   *
+   * Mientras no se haya conectado nada NO se llama a `navigator.getGamepads()`. Esa
+   * llamada construye una instantánea nueva del estado de todos los mandos cada vez,
+   * y hacerla sesenta veces por segundo para descubrir que no hay ninguno costaba
+   * un tercio de la tasa de refresco —lo detectó la comprobación de bucle del e2e—.
+   *
+   * Esperar al evento es además lo correcto: `gamepadconnected` también se emite por
+   * un mando que ya estuviera enchufado al cargar la página, en cuanto se pulsa algo
+   * en él. El navegador lo oculta hasta entonces a propósito, para no dar una huella
+   * de identificación a cualquier página que pregunte.
+   */
   read() {
-    if (!navigator.getGamepads) return null;
-    for (const pad of navigator.getGamepads()) {
-      if (pad && pad.connected) return pad;
-    }
-    return null;
+    if (this.index === null || !navigator.getGamepads) return null;
+    const pad = navigator.getGamepads()[this.index];
+    return pad && pad.connected ? pad : null;
   }
 
   static isDown(pad, index) {
@@ -78,12 +92,10 @@ export class GamepadInput {
   poll() {
     const pad = this.read();
     if (!pad) {
-      if (this.name !== null) this.setConnected(null);
+      // El mando desapareció sin que llegase el evento de desconexión.
+      if (this.index !== null) this.setConnected(null);
       return null;
     }
-    // El evento `gamepadconnected` no llega si el mando ya estaba enchufado al
-    // cargar la página: hasta que se pulsa algo, el navegador lo oculta.
-    if (this.name === null) this.setConnected(pad);
 
     let x = pad.axes[AXIS_X] || 0;
     let y = pad.axes[AXIS_Y] || 0;

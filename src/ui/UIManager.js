@@ -16,6 +16,7 @@ import { el } from './dom.js';
 import { icon } from './icons.js';
 import { quality } from '../engine/QualitySettings.js';
 import { bindings } from '../engine/Bindings.js';
+import { offlineStore } from '../network/OfflineStore.js';
 
 const AUDIO_KEY = 'triad_audio_muted';
 
@@ -238,6 +239,8 @@ export class UIManager {
       'rank:refresh': () => this.fetchLeaderboard(),
       'rank:sort': ({ sort }) => this.store.patch({ rankSort: sort }),
 
+      'game:offline': () => this.startOffline(),
+
       'game:pause': () => this.togglePause(true),
       'game:resume': () => this.togglePause(false),
       'game:respawn': () => this.requestRespawn(),
@@ -322,6 +325,9 @@ export class UIManager {
     this.rooms.refresh();
     this.fetchLeaderboard();
     this.fetchAchievements();
+    // La sincronización refresca por su cuenta el ranking si llega a aplicar algo,
+    // así que no importa que salga después de haberlo pedido.
+    this.syncOfflineProgress();
   }
 
   async fetchLeaderboard() {
@@ -344,7 +350,11 @@ export class UIManager {
   }
 
   get isReconnecting() {
-    return this.store.get().connection !== 'online';
+    const state = this.store.get();
+    // Una partida local no depende del enlace: congelarla porque el socket esté
+    // reintentando sería castigar precisamente el caso para el que existe.
+    if (state.offline) return false;
+    return state.connection !== 'online';
   }
 
   onConnected() {
@@ -527,6 +537,76 @@ export class UIManager {
 
   showVictory() {
     this.store.patch({ modal: 'victory' });
+  }
+
+  // ----------------------------------------------------------- sin conexión
+
+  /**
+   * Arranca una partida en solitario que no necesita servidor.
+   *
+   * Se retoma por el nivel más alto alcanzado en local, no desde el uno: es una
+   * partida guardada, no una demostración. La semilla se sortea una vez por sesión y
+   * no se guarda, porque el determinismo solo hace falta para que dos clientes de una
+   * sala construyan la misma bóveda, y aquí no hay segundo cliente.
+   */
+  startOffline() {
+    this.offlineSeed = Math.floor(Math.random() * 1e9);
+    this.store.patch({ offline: true, modal: null });
+    this.game.startLevel({
+      level: offlineStore.nextLevel,
+      seed: this.offlineSeed,
+      seedOffset: 0,
+      playersCount: 1
+    });
+  }
+
+  /**
+   * Nivel superado sin sala: lo que en línea hace el servidor, aquí lo hace el
+   * cliente contra el almacén local, y la partida encadena al siguiente nivel con la
+   * misma pausa de dos segundos que la versión con sala.
+   */
+  onOfflineLevelComplete(run) {
+    const { unlocked } = offlineStore.recordLevel(run, this.store.get().achievementCatalog);
+
+    this.store.patch({ offlinePending: offlineStore.pendingCount });
+    if (unlocked.length > 0) this.onAchievementsUnlocked(unlocked);
+
+    this.showVictory();
+    setTimeout(() => {
+      if (this.store.get().view !== 'hud') return; // se salió al menú mientras tanto
+      this.game.startLevel({
+        level: run.level + 1,
+        seed: this.offlineSeed,
+        seedOffset: 0,
+        playersCount: 1
+      });
+    }, 2000);
+  }
+
+  /**
+   * Vuelca al servidor lo jugado sin conexión.
+   *
+   * Se lanza al iniciar sesión y al recuperar el enlace. Solo se borra de la cola lo
+   * que el servidor confirma haber aplicado: si la petición se corta a medias, lo que
+   * quede se reenvía en el siguiente intento en lugar de perderse.
+   */
+  async syncOfflineProgress() {
+    const runs = offlineStore.pendingRuns();
+    if (runs.length === 0 || !this.store.get().user) return;
+
+    const res = await this.api.syncProgress(runs);
+    if (!res.success) return;
+
+    offlineStore.clearSynced(res.applied || 0);
+    this.store.patch({ offlinePending: offlineStore.pendingCount });
+
+    if (res.stats) this.onProgressUpdated(res.stats);
+    if (res.unlocked && res.unlocked.length > 0) this.onAchievementsUnlocked(res.unlocked);
+
+    if (res.applied > 0) {
+      this.alert(this.ctx.t('offline_synced').replace('{0}', res.applied));
+      this.fetchLeaderboard();
+    }
   }
 
   /**

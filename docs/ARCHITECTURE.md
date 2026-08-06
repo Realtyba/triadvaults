@@ -267,13 +267,39 @@ imposible, no más interesante.
 
 ## 10. Logros
 
-Catálogo en `shared/achievements.js`, que importan **servidor y cliente** igual que
-`events.js`. En Postgres solo se guarda qué ha desbloqueado cada agente
-(`triad_user_achievements`), no la definición: una tabla de catálogo sería un segundo sitio
-que mantener sincronizado con el código, sin ganar nada.
+El catálogo vive en la tabla **`triad_achievements`** (migración 005). Antes era una lista
+fija en `shared/achievements.js`, y eso obligaba a publicar una versión nueva del juego para
+añadir un logro. Ahora añadir uno es un `INSERT`.
 
-**La evaluación es del servidor**, en el handler de `LEVEL_COMPLETE`. Los logros se ven en
-el perfil y son públicos, así que dejar que el navegador decidiera cuáles se ha ganado sería
+Lo que queda en `shared/achievements.js` es el **motor**: las métricas que se pueden mirar,
+los comparadores y el evaluador. Las condiciones son **datos**, no funciones:
+
+```json
+[{"metric": "timeSpent", "op": ">", "value": 0},
+ {"metric": "timeSpent", "op": "<", "value": 60}]
+```
+
+Se acumulan con Y lógico, que es lo que permite expresar un intervalo. Guardar un `check`
+como texto y ejecutarlo obligaría a `eval`, y eso convertiría una fila de la base de datos en
+ejecución de código dentro del servidor.
+
+Solo hace falta tocar código para mirar una métrica que aún no existe. Las disponibles son
+`level`, `maxLevel`, `puzzlesSolved`, `totalTimePlayed`, `timeSpent`, `playersCount`,
+`deaths`, `damageTaken` y `flawless` (1 o 0). Ampliarlas es tocar `METRICS` **y** quien las
+calcula, en `server/services/progression.js`.
+
+`DEFAULT_ACHIEVEMENTS` sigue en el código con dos usos: sembrar la tabla la primera vez —solo
+si está vacía, para no resucitar lo que alguien borró a conciencia— y hacer de catálogo
+cuando se corre sobre el respaldo JSON o sin conexión. El cliente lo recibe por
+`GET /api/achievements`, **sin las condiciones**: no evalúa nada, así que mandarle las reglas
+solo serviría para sugerir lo contrario.
+
+Un logro se retira con `enabled = FALSE`, nunca borrando la fila: quien ya lo tuviera conserva
+su registro en `triad_user_achievements`, y sin definición la interfaz no sabría pintarlo.
+
+**La evaluación es del servidor**, tanto en el handler de `LEVEL_COMPLETE` como al sincronizar
+lo jugado sin conexión — ambos pasan por `recordLevelCompletion`. Los logros se ven en el
+perfil y son públicos, así que dejar que el navegador decidiera cuáles se ha ganado sería
 regalarlos a quien abriera la consola.
 
 Los contadores que necesitan (`levelDamageTaken`, `levelDeaths`) viven en el estado de sala
@@ -282,17 +308,91 @@ deducir del estado final. La concesión usa `ON CONFLICT DO NOTHING` y devuelve 
 insertó de verdad, de modo que tres clientes reportando el mismo nivel a la vez no producen
 ni duplicados ni avisos repetidos.
 
+Mover el catálogo a datos quitó de en medio la revisión de código que cazaba las
+definiciones rotas. Lo sustituyen tres redes: el repositorio descarta al cargar las filas que
+no se pueden evaluar **diciendo cuál y por qué**, una restricción de la tabla rechaza un
+`conditions` que no sea un array no vacío, y `npm run validate:achievements` comprueba además
+que las condiciones no se contradigan (`timeSpent > 60` junto a `timeSpent < 10` es una
+definición válida que nadie desbloquearía jamás).
+
 ---
 
-## 11. Comprobaciones
+## 11. Controles
+
+`src/engine/Bindings.js` guarda la asignación en `localStorage`; las teclas estaban escritas
+dentro de `Input.js` y quien jugara en AZERTY —que mueve con ZQSD— no tenía forma de
+cambiarlas. Se usa `KeyboardEvent.code` y no `key` porque describe la **posición física**: la
+tecla que está donde la W del QWERTY reporta `KeyW` en cualquier distribución.
+
+Cada acción tiene dos huecos, principal y alternativa. Asignar una tecla que ya servía para
+otra cosa se la quita a esa otra, y si la deja sin ninguna, hereda el hueco que se acaba de
+liberar: una acción sin tecla es una acción que no se puede ejecutar. `Escape`, `F5`, `F11`,
+`F12` y `Tab` no son asignables.
+
+Teclado y mando se leen en coordenadas de **pantalla** y se convierten a mundo en un solo
+sitio (`ISO`, un giro de 45°). Antes cada tecla sumaba a mano su par de componentes
+isométricas, y esa conversión repetida cinco veces no dejaba sitio para un stick analógico. El
+módulo del vector se conserva por debajo de 1, así que a medio recorrido el agente anda
+despacio.
+
+El mando (`src/engine/Gamepad.js`) usa zona muerta **radial** sobre el módulo, no por eje:
+con umbral por eje una diagonal suave se corta en escalones. El tramo útil se reescala a 0..1
+para que no arranque de golpe a un cuarto de velocidad. Mientras no haya mando conectado no se
+llama a `navigator.getGamepads()`: esa llamada construye una instantánea nueva cada vez y
+hacerla sesenta veces por segundo para descubrir que no hay ninguno costaba tasa de refresco.
+
+---
+
+## 12. Modo sin conexión
+
+Un juego de escritorio no puede depender de que un servidor esté vivo. `OfflineStore`
+(`src/network/OfflineStore.js`) guarda el progreso en `localStorage` y encadena niveles sin
+socket: el botón está siempre visible en el menú, con y sin sesión.
+
+Cada nivel superado se apunta en dos sitios: el resumen local —lo que se enseña mientras no
+hay red— y una **cola de partidas pendientes**. Al recuperar el enlace se manda la cola a
+`POST /api/profile/sync`, y es el servidor quien la vuelve a evaluar. El resumen local no se
+manda nunca: vive en `localStorage` y editarlo es trivial. `playersCount` se fuerza a 1 por lo
+mismo, o quien lo pusiera a 3 se regalaría el logro de escuadrón completo.
+
+El volcado es de entrega **al menos una vez**: el cliente no borra un nivel de su cola hasta
+que el servidor confirma, así que un acuse perdido provoca un reenvío. Cada nivel lleva el
+instante en que terminó y `triad_game_users.last_offline_sync_at` (migración 006) guarda el
+más reciente ya aplicado; lo que no lo supere se descarta. Sin esa marca, un corte de red
+justo después de escribir contaría el mismo nivel dos veces.
+
+La respuesta dice cuántos niveles aceptó para que el cliente borre exactamente esos: vaciar la
+cola entera perdería lo jugado mientras la petición viajaba.
+
+---
+
+## 13. Empaquetado de escritorio
+
+`electron-builder.yml` produce NSIS para Windows y AppImage + deb para Linux. La lista de
+ficheros es **blanca, no negra**: con exclusiones habría que acordarse de sacar cada
+dependencia de servidor nueva, y basta un olvido para meter credenciales en el instalable.
+
+El servidor no se empaqueta. El juego de escritorio es el cliente: en solitario corre entero
+en local, y para jugar acompañado apunta al servidor que indique `VITE_API_URL` al construir.
+Sin esa variable, una build abierta desde el disco detecta el protocolo `file:` y se queda en
+un solo jugador en vez de reintentar contra `file://` para siempre.
+
+El icono se genera por código (`npm run icon`, `scripts/make-icon.js`) en lugar de guardar un
+binario en el repositorio: así se puede leer y cambiar de color en una línea.
+
+---
+
+## 14. Comprobaciones
 
 | Comando | Qué valida |
 |---|---|
-| `npm run validate` | ambas validaciones de abajo |
+| `npm run validate` | las tres validaciones de abajo |
 | `npm run validate:levels` | trazados jugables, y que cada arquetipo reciba los nodos que pide |
 | `npm run validate:puzzles` | que cada arquetipo **se pueda resolver**, y que su restricción no se pueda saltar |
+| `npm run validate:achievements` | que las definiciones —las del paquete y las de la base de datos— se puedan evaluar y cumplir |
 | `npm run test:e2e` | juego real en Chrome: solo, dúo y reconexión (requiere `npm run dev`) |
 | `npm run build` | que el grafo de módulos del cliente resuelve |
+| `npm run dist:linux` / `dist:win` | instalable de escritorio |
 | `curl localhost:3001/api/health` | que el servidor sirve desde Postgres y no desde el respaldo |
 
 `validate:levels` verifica el trazado; `validate:puzzles` verifica la **regla**. Hacen falta

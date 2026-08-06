@@ -1,0 +1,79 @@
+# Empaquetado de escritorio. Se genera con `npm run dist:linux` / `npm run dist:win`.
+#
+# En fichero aparte y no dentro de package.json a propósito: la configuración de
+# empaquetado necesita comentarios —qué se incluye y por qué, qué formato espera cada
+# tienda— y JSON no los admite.
+
+appId: com.triadvaults.game
+productName: Triad Vaults
+copyright: Triad Vaults
+
+# ⚠ El .deb exige además una página de proyecto (`homepage` en package.json) y un
+# responsable (`linux.maintainer`, más abajo). Los dos van con marcador de posición
+# sobre el dominio reservado `.invalid`, que nunca resuelve: son datos que hay que
+# rellenar antes de publicar en ningún sitio, no inventar.
+
+directories:
+  output: release
+  buildResources: build
+
+# La lista blanca no basta por sí sola: electron-builder añade siempre las
+# `dependencies` de package.json, así que sin la exclusión final se colaban en el
+# instalable `pg`, `express` y `nodemailer` —40 MB de código de servidor que el
+# jugador no ejecuta— y con ellos toda su superficie de ataque.
+#
+# Aquí no hace falta ninguna: el cliente es un paquete de Vite con todo dentro, y
+# Electron solo carga `dist/index.html` y los dos ficheros de `electron/`.
+files:
+  - dist/**/*
+  - electron/**/*
+  - package.json
+  - '!node_modules/**/*'
+
+# El servidor NO se empaqueta. El juego de escritorio es el cliente: en solitario
+# corre entero en local (ver `OfflineStore`), y para jugar acompañado se conecta al
+# servidor que indique VITE_API_URL al construir. Meter Express y Postgres dentro del
+# instalable obligaría a cada jugador a levantar una base de datos para jugar solo.
+
+asar: true
+# `.map` fuera: son la mitad del peso y solo sirven para depurar el código propio.
+asarUnpack: []
+
+# Construir el instalador de Windows DESDE Linux necesita `wine` en el sistema; sin
+# él, `npm run dist:win` falla con "spawn wine ENOENT". Desde Windows no hace falta
+# nada. `dist:linux` no tiene esa dependencia.
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Triad Vaults
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  icon: build/icon.png
+  category: Game
+  maintainer: Triad Vaults <maintainer@triadvaults.invalid> # ⚠ marcador, ver arriba
+  # Sin esto el escritorio no asocia la ventana abierta con su icono del lanzador:
+  # el juego aparece en la barra de tareas como una entrada genérica y sin nombre.
+  syncDesktopName: true
+  synopsis: Escape cooperativo de bóvedas procedurales
+  description: >
+    Juego de escape cooperativo para hasta tres agentes. Cada bóveda se genera con
+    una semilla compartida, así que todos los jugadores de una sala recorren
+    exactamente el mismo mapa.
+
+# Sin publicación automática: subir a ninguna parte es una decisión de quien
+# publica, no un efecto secundario de compilar.
+publish: null

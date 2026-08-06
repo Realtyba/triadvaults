@@ -191,5 +191,9 @@
   "inst_desc_camera": "Use the Mouse Wheel to zoom the isometric view in and out.",
   "inst_desc_objective": "Each level has as many pressure plates as players (1 to 3). All agents must step on them at the same time.",
   "inst_desc_exit": "Once the puzzle is solved, the exit gate opens with a neon beacon. Cross it to escape to the next level.",
-  "inst_desc_ghost": "A corrupted entity will chase you. Its speed and aggression increase every level. Don't let it touch your shield!"
+  "inst_desc_ghost": "A corrupted entity will chase you. Its speed and aggression increase every level. Don't let it touch your shield!",
+  "btn_play_offline": "PLAY OFFLINE",
+  "offline_hint": "Solo run with no server needed. Progress is saved on this machine.",
+  "offline_pending": "{0} level(s) played offline waiting to sync.",
+  "offline_synced": "Synced {0} level(s) played offline."
 }

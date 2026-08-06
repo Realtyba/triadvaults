@@ -55,7 +55,8 @@ export class RoomController {
       paused: false,
       room: null,
       roomCode: '----',
-      connection: 'online'
+      connection: 'online',
+      offline: false
     });
     this.refresh();
   }

@@ -2,6 +2,12 @@ import { session } from './session.js';
 
 export function resolveBaseUrl() {
   if (import.meta.env && import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+
+  // Build empaquetada abierta desde el disco (Electron sin servidor de desarrollo).
+  // Aquí `origin` es "file://", y pedirle nada solo produce errores de red en bucle:
+  // sin `VITE_API_URL` en la compilación, el juego es de un solo jugador.
+  if (window.location.protocol === 'file:') return null;
+
   const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
   return isLocal ? 'http://localhost:3001' : window.location.origin;
 }
@@ -14,7 +20,14 @@ export class ApiClient {
     this.baseUrl = baseUrl;
   }
 
+  /** Sin servidor al que apuntar no hay nada que pedir; ver `resolveBaseUrl`. */
+  get isAvailable() {
+    return this.baseUrl !== null;
+  }
+
   async request(path, { method = 'GET', body, auth = false } = {}) {
+    if (!this.isAvailable) return { ...CONNECTION_ERROR };
+
     const lang = localStorage.getItem('triad_lang') || 'es';
     const headers = { 
       'Content-Type': 'application/json',
@@ -92,5 +105,10 @@ export class ApiClient {
   /** Catálogo de logros: qué existe y cómo se llama. No requiere sesión. */
   getAchievementCatalog() {
     return this.request('/api/achievements');
+  }
+
+  /** Vuelca al servidor los niveles superados sin conexión. */
+  syncProgress(runs) {
+    return this.request('/api/profile/sync', { method: 'POST', auth: true, body: { runs } });
   }
 }

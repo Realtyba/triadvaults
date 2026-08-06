@@ -1,7 +1,7 @@
 import { initDatabase, closeDatabase, activeStorage } from './pool.js';
 import * as users from './users.repo.js';
 import * as recovery from './recovery.repo.js';
-import { saveProgress } from './progress.repo.js';
+import { saveProgress, getOfflineSyncMark, setOfflineSyncMark } from './progress.repo.js';
 import { getLeaderboard } from './leaderboard.repo.js';
 import {
   listAchievements,
@@ -27,6 +27,8 @@ export const DatabaseManager = {
   requestPasswordReset: recovery.requestPasswordReset,
   resetPassword: recovery.resetPassword,
   saveProgress,
+  getOfflineSyncMark,
+  setOfflineSyncMark,
   getLeaderboard,
   listAchievements,
   grantAchievements,

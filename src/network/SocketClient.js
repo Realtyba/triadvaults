@@ -17,8 +17,13 @@ export class SocketClient {
     this.uid = null;
     this.listeners = new Map();
 
-    this.socket = io(baseUrl, {
-      autoConnect: session.isValid(),
+    // Build empaquetada sin servidor configurado: se construye el socket igual —hay
+    // mucho código que llama a `emit` sin preguntar— pero no se conecta nunca, en
+    // lugar de dejarlo reintentando contra "file://" para siempre.
+    this.isEnabled = baseUrl !== null;
+
+    this.socket = io(baseUrl || undefined, {
+      autoConnect: this.isEnabled && session.isValid(),
       transports: ['websocket', 'polling'],
       auth: { token: session.getToken() },
       reconnection: true,
@@ -37,6 +42,7 @@ export class SocketClient {
   }
 
   connectWithToken(token) {
+    if (!this.isEnabled) return;
     this.syncUidFromSession();
     this.socket.auth = { token };
     if (this.socket.connected) this.socket.disconnect();

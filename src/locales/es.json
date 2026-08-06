@@ -191,5 +191,9 @@
   "inst_desc_camera": "Usa la rueda del ratón para acercar o alejar la vista isométrica.",
   "inst_desc_objective": "Cada nivel tiene tantas placas de presión como jugadores (1 a 3). Todos los agentes deben pisarlas a la vez.",
   "inst_desc_exit": "Una vez resuelto el acertijo, la compuerta se abre con una baliza de neón. Crúzala para escapar al siguiente nivel.",
-  "inst_desc_ghost": "Un ente corrupto te perseguirá. Su velocidad y agresividad aumentan con cada nivel. ¡No dejes que toque tu escudo!"
+  "inst_desc_ghost": "Un ente corrupto te perseguirá. Su velocidad y agresividad aumentan con cada nivel. ¡No dejes que toque tu escudo!",
+  "btn_play_offline": "JUGAR SIN CONEXIÓN",
+  "offline_hint": "Partida en solitario que no necesita servidor. El progreso se guarda en este equipo.",
+  "offline_pending": "{0} nivel(es) jugados sin red esperando a sincronizarse.",
+  "offline_synced": "Sincronizados {0} nivel(es) jugados sin conexión."
 }

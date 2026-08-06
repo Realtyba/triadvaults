@@ -1524,6 +1524,21 @@ label {
   outline-offset: 2px;
 }
 
+/* Entrada al modo sin conexión. Discreta a propósito: es la alternativa, no el
+   camino principal, pero tiene que estar siempre a la vista. */
+.offline-entry {
+  margin: var(--space-4) auto 0;
+  max-width: 420px;
+  text-align: center;
+}
+
+.offline-entry__hint {
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
 /* Remapeo de teclas: una fila por acción, con hueco principal y alternativo. */
 .key-list {
   display: flex;

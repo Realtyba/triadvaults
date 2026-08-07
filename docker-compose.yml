@@ -1,14 +1,14 @@
 services:
   app:
     build: .
-    container_name: triad-vaults
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    # Sin `ports:`: no hace falta publicar 3001 en el host. Coolify enruta al
+    # contenedor por la red interna de Docker a través de Traefik; publicarlo
+    # además en el host expondría el juego sin pasar por su SSL.
+    expose:
+      - "3001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    env_file:
-      - .env
     environment:
       - NODE_ENV=production
     logging:

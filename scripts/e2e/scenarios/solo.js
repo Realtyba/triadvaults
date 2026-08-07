@@ -104,14 +104,20 @@ export async function runSolo(conn) {
 
   await ev(`(() => { window.__g0 = window.gameApp.level.ghost.mesh.position.clone(); return true; })()`);
   await sleep(1500);
+  // El fantasma atraviesa la geometría **a propósito** (ver GhostEnemy.js): no hay
+  // pathfinding, y una aparición que respetase los muros solo parecería un enemigo
+  // con la ruta rota. La comprobación anterior afirmaba lo contrario y solo pasaba
+  // por suerte del muestreo. Lo que sí es invariante es que no se salga de la sala.
   const ghost = await ev(`(() => {
     const g = window.gameApp.level.ghost, p = g.mesh.position;
+    const info = window.gameApp.level.info;
     return { dist: +window.__g0.distanceTo(p).toFixed(2), target: g.targetUid,
-             inWall: window.gameApp.level.obstacleBoxes.some(b => p.x + 0.5 > b.min.x && p.x - 0.5 < b.max.x &&
-                                                                  p.z + 0.5 > b.min.z && p.z - 0.5 < b.max.z) };
+             count: window.gameApp.level.ghosts.length,
+             outside: Math.abs(p.x) > info.sizeX || Math.abs(p.z) > info.sizeZ };
   })()`);
   r.check(ghost.dist >= 0.5, `el fantasma persigue a "${ghost.target}" (${ghost.dist} u)`, `el fantasma no se mueve (${ghost.dist} u)`);
-  r.check(!ghost.inWall, 'el fantasma respeta la geometría', 'el fantasma está dentro de un muro');
+  r.check(!ghost.outside, 'el fantasma se mantiene dentro de la sala', 'el fantasma se ha ido fuera de la sala');
+  r.check(ghost.count === 1, 'en solitario hay exactamente un fantasma', `hay ${ghost.count} fantasmas en solitario`);
 
   const before = await ev(`window.gameApp.players.local.health`);
   await ev(`(window.gameApp.onGhostHit(window.gameApp.players.localUid), true)`);

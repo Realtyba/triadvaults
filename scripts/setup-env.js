@@ -45,8 +45,8 @@ function main() {
   console.log('  y pon el MISMO valor en los dos ficheros.');
   console.log('');
   console.log('  Comprueba también que TRIADVAULTS_API_URL apunta a tu realtyba-api');
-  console.log('  (por defecto http://localhost:8000). Es la única: de ahí la leen');
-  console.log('  tanto este servidor como el cliente.');
+  console.log('  (http://localhost:8080 con su docker-local; 8000 si usas `artisan serve`).');
+  console.log('  Es la única: de ahí la leen este servidor, el cliente y las pruebas e2e.');
 }
 
 main();

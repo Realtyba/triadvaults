@@ -1,9 +1,10 @@
 import { esc } from '../dom.js';
+import { ROOM_STATUS } from '../../../shared/constants.js';
 
 const STATUS_LABELS = {
-  lobby: { key: 'room_status_lobby', className: 'is-lobby' },
-  in_game: { key: 'room_status_in_game', className: 'is-ingame' },
-  full: { key: 'room_status_full', className: 'is-full' }
+  [ROOM_STATUS.LOBBY]: { key: 'room_status_lobby', className: 'is-lobby' },
+  [ROOM_STATUS.IN_GAME]: { key: 'room_status_in_game', className: 'is-ingame' },
+  [ROOM_STATUS.FULL]: { key: 'room_status_full', className: 'is-full' }
 };
 
 /**
@@ -11,9 +12,9 @@ const STATUS_LABELS = {
  * en vez de ocultarlas, que era el motivo de que la lista pareciese siempre vacía.
  */
 export function renderRoomCard(room, t) {
-  const status = STATUS_LABELS[room.status] || STATUS_LABELS.lobby;
+  const status = STATUS_LABELS[room.status] || STATUS_LABELS[ROOM_STATUS.LOBBY];
   const disabled = !room.joinable;
-  const buttonLabel = room.status === 'in_game' ? t('btn_join_running') : t('btn_join_room');
+  const buttonLabel = room.status === ROOM_STATUS.IN_GAME ? t('btn_join_running') : t('btn_join_room');
 
   return `
     <li class="room-card ${status.className}" data-room-code="${esc(room.code)}">

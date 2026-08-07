@@ -104,24 +104,21 @@ export class SocketClient {
 
   // -------------------------------------------------------------- salas
 
+  /** Guarda la sala y el uid que devuelve el servidor si la operación salió bien. */
+  adoptRoom(response) {
+    if (response && response.success) {
+      this.currentRoom = response.room;
+      this.uid = String(response.uid);
+    }
+    return response;
+  }
+
   createRoom(callback) {
-    this.emit(EVENTS.CREATE_ROOM, {}, response => {
-      if (response && response.success) {
-        this.currentRoom = response.room;
-        this.uid = String(response.uid);
-      }
-      callback(response);
-    });
+    this.emit(EVENTS.CREATE_ROOM, {}, response => callback(this.adoptRoom(response)));
   }
 
   joinRoom(roomCode, callback) {
-    this.emit(EVENTS.JOIN_ROOM, { roomCode }, response => {
-      if (response && response.success) {
-        this.currentRoom = response.room;
-        this.uid = String(response.uid);
-      }
-      callback(response);
-    });
+    this.emit(EVENTS.JOIN_ROOM, { roomCode }, response => callback(this.adoptRoom(response)));
   }
 
   leaveRoom() {
@@ -144,12 +141,26 @@ export class SocketClient {
     this.emit(EVENTS.PLAYER_MOVE, { roomCode: this.roomCode, position, rotationY });
   }
 
-  sendGhostState(position, targetUid) {
-    if (!this.roomCode || !this.isHost || !this.isConnected) return;
+  /**
+   * Estado de todos los fantasmas en un solo paquete.
+   *
+   * Un evento por fantasma habría triplicado los envíos a 15 Hz sin ganar nada: el
+   * host los simula todos en el mismo fotograma, así que viajan juntos.
+   */
+  sendGhostStates(ghosts = []) {
+    if (!this.roomCode || !this.isHost || !this.isConnected || ghosts.length === 0) return;
+
     this.emit(EVENTS.GHOST_STATE, {
       roomCode: this.roomCode,
-      position: { x: position.x, y: position.y, z: position.z },
-      targetUid
+      ghosts: ghosts.map(ghost => ({
+        id: ghost.index,
+        position: {
+          x: ghost.mesh.position.x,
+          y: ghost.mesh.position.y,
+          z: ghost.mesh.position.z
+        },
+        targetUid: ghost.targetUid || null
+      }))
     });
   }
 
@@ -163,10 +174,16 @@ export class SocketClient {
     this.emit(EVENTS.REQUEST_RESPAWN, { roomCode: this.roomCode });
   }
 
-  /** Lo señala quien cruza la salida, sea o no el host; el servidor lo procesa una vez. */
-  notifyLevelComplete(timeSpent = 0) {
+  /**
+   * Lo señala quien cruza la salida, sea o no el host; el servidor lo procesa una vez.
+   *
+   * `level` es lo que permite descartar los duplicados: llegan hasta tres avisos
+   * del mismo nivel —uno por agente— y el servidor solo atiende el que coincide
+   * con el nivel que la sala está jugando en ese momento.
+   */
+  notifyLevelComplete(timeSpent = 0, level = null) {
     if (!this.roomCode) return;
-    this.emit(EVENTS.LEVEL_COMPLETE, { roomCode: this.roomCode, timeSpent });
+    this.emit(EVENTS.LEVEL_COMPLETE, { roomCode: this.roomCode, timeSpent, level });
   }
 
   requestRegenerate() {

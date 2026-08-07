@@ -12,6 +12,16 @@ export class PlayerRegistry {
     this.scene = scene;
     this.players = new Map();
     this.localUid = null;
+
+    /**
+     * Búfer reutilizado de `snapshot()`.
+     *
+     * La instantánea se pide una vez por fotograma —y con varios fantasmas, sus
+     * consumidores se multiplican—, así que rehacer el array y un objeto por
+     * jugador cada vez era la fuente de basura más constante del bucle. Los
+     * consumidores solo la leen dentro del fotograma, nunca la guardan.
+     */
+    this.snapshotBuffer = [];
   }
 
   get local() {
@@ -108,15 +118,33 @@ export class PlayerRegistry {
     });
   }
 
-  /** Instantánea que consumen la IA del fantasma y el puzle. */
+  /**
+   * Instantánea que consumen la IA del fantasma y el puzle.
+   *
+   * Devuelve un búfer reutilizado: es válido hasta la siguiente llamada, así que
+   * quien necesite conservarlo debe copiarlo. Ningún consumidor actual lo hace —
+   * todos lo recorren y lo sueltan dentro del mismo fotograma.
+   */
   snapshot(isOnPlate) {
-    return this.list().map(entity => ({
-      uid: entity.uid,
-      index: entity.index,
-      position: entity.getPosition(),
-      health: entity.health,
-      alive: entity.alive,
-      onPlate: isOnPlate ? isOnPlate(entity.getPosition()) : false
-    }));
+    const buffer = this.snapshotBuffer;
+    let i = 0;
+
+    for (const entity of this.players.values()) {
+      const position = entity.getPosition();
+      const slot = buffer[i] || (buffer[i] = {});
+
+      slot.uid = entity.uid;
+      slot.index = entity.index;
+      slot.position = position;
+      slot.health = entity.health;
+      slot.alive = entity.alive;
+      slot.onPlate = isOnPlate ? isOnPlate(position) : false;
+      i++;
+    }
+
+    // Al salir un jugador el búfer se queda largo: se recorta para que nadie
+    // itere sobre entradas de una partida anterior.
+    if (buffer.length > i) buffer.length = i;
+    return buffer;
   }
 }

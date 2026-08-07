@@ -1,12 +1,18 @@
 import * as THREE from 'three';
 import { moveWithSlide, turnTowards } from '../physics/collision.js';
+import { disposeObject3D } from '../engine/disposal.js';
+import { PALETTE, neonMaterial, darkBodyMaterial } from '../engine/materials.js';
+import { clamp01 } from '../utils/math.js';
 
-export const PLAYER_COLORS = [0x00f3ff, 0xff0077, 0x00ff66]; // agente 1, 2, 3
+export const PLAYER_COLORS = PALETTE.PLAYER; // agente 1, 2, 3
 export const PLAYER_RADIUS = 0.4;
 export const PLAYER_SPEED = 8.5;
 
 /** Suavizado de las posiciones remotas: sin esto los otros agentes se ven a saltos. */
 const REMOTE_LERP = 12;
+
+/** Reutilizado en cada fotograma: `clone()` alocaba un Vector3 por agente y frame. */
+const stepScratch = new THREE.Vector3();
 
 export class PlayerEntity {
   constructor({ uid, name, index = 0, isLocal = false }) {
@@ -29,7 +35,7 @@ export class PlayerEntity {
   buildMesh() {
     const body = new THREE.Mesh(
       new THREE.CylinderGeometry(0.4, 0.3, 1.4, 8),
-      new THREE.MeshStandardMaterial({ color: 0x111525, roughness: 0.3, metalness: 0.8 })
+      darkBodyMaterial(PALETTE.BODY_DARK, { metalness: 0.8, roughness: 0.3 })
     );
     body.position.y = 0.7;
     body.castShadow = true;
@@ -39,12 +45,7 @@ export class PlayerEntity {
 
     const head = new THREE.Mesh(
       new THREE.BoxGeometry(0.5, 0.4, 0.5),
-      new THREE.MeshStandardMaterial({
-        color: this.colorHex,
-        emissive: this.colorHex,
-        emissiveIntensity: 0.8,
-        roughness: 0.2
-      })
+      neonMaterial(this.colorHex, { intensity: 0.8, roughness: 0.2 })
     );
     head.position.set(0, 1.4, 0.1);
     head.castShadow = true;
@@ -129,7 +130,7 @@ export class PlayerEntity {
   update(delta, moveVector, obstacleBoxes = []) {
     if (!this.alive || !moveVector || moveVector.lengthSq() === 0) return false;
 
-    const step = moveVector.clone().multiplyScalar(this.speed * delta);
+    const step = stepScratch.copy(moveVector).multiplyScalar(this.speed * delta);
     const moved = moveWithSlide(this.mesh.position, step, obstacleBoxes, PLAYER_RADIUS);
 
     this.mesh.rotation.y = turnTowards(
@@ -142,16 +143,12 @@ export class PlayerEntity {
 
   /** Interpolación de un jugador remoto hacia su último estado conocido. */
   updateRemote(delta) {
-    const factor = Math.min(1, delta * REMOTE_LERP);
+    const factor = clamp01(delta * REMOTE_LERP);
     this.mesh.position.lerp(this.targetPosition, factor);
     this.mesh.rotation.y = turnTowards(this.mesh.rotation.y, this.targetRotationY, delta);
   }
 
   dispose(scene) {
-    scene.remove(this.mesh);
-    this.mesh.traverse(child => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
+    disposeObject3D(this.mesh, scene);
   }
 }

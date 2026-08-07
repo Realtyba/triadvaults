@@ -1,87 +1,60 @@
 import { EVENTS, GHOST_DAMAGE } from '../../../shared/events.js';
 import { reportLevelCompletion } from '../../services/apiClient.js';
 import { broadcastAll } from '../broadcast.js';
+import { createHandlerContext } from './context.js';
 
 export function registerGameHandlers(io, socket, roomManager) {
-  const { id: uid, username } = socket.user;
-
-  /** Sala del emisor, verificando además que sea el host cuando se exige autoridad. */
-  const authorize = (roomCode, { hostOnly = false } = {}) => {
-    const room = roomManager.getRoom(roomCode);
-    if (!room) return null;
-    if (!roomManager.findPlayer(room, uid)) return null;
-    if (hostOnly && !roomManager.isHost(room, uid)) return null;
-    return room;
-  };
+  const { uid, username, authorize } = createHandlerContext(socket, roomManager);
 
   // Lo dispara quien llegue a la salida, no necesariamente el host: con 2 o 3
   // agentes la compuerta se abre en grupo y cualquiera puede cruzarla primero.
+  //
+  // Por eso mismo llegan VARIOS avisos del mismo nivel, uno por agente, en turnos
+  // distintos del bucle de eventos. La guarda anterior no servía: se liberaba
+  // antes del `await`, así que los tres pasaban y el nivel subía de tres en tres,
+  // se emitían tres `LOAD_NEXT_LEVEL` y se escribía tres veces el progreso en
+  // Laravel. Ahora la referencia es el propio número de nivel —si el que anuncia
+  // el cliente ya no es el que la sala está jugando, el aviso llega tarde y se
+  // descarta— y el pestillo se suelta en un `finally`, ya pasada la espera.
   socket.on(EVENTS.LEVEL_COMPLETE, async (payload = {}) => {
     const room = authorize(payload.roomCode);
     if (!room || room.completingLevel) return;
-    room.completingLevel = true;
 
     const completedLevel = room.currentLevel;
-    const timeSpent = Math.max(0, Math.min(60 * 60, Number(payload.timeSpent) || 0));
-    const playersCount = room.players.length;
 
-    // Los contadores del nivel se copian ANTES de avanzar: `advanceLevel` los
-    // reinicia, y son justo lo que necesitan los logros del nivel recién superado.
-    const participants = room.players.map(p => ({
-      uid: p.uid,
-      name: p.name,
-      socketId: p.socketId,
-      damageTaken: p.levelDamageTaken,
-      deaths: p.levelDeaths
-    }));
+    // El cliente dice qué nivel cree haber superado. Si no coincide, es un aviso
+    // duplicado o rezagado de un nivel que ya se cerró.
+    const announced = Number(payload.level);
+    if (Number.isFinite(announced) && announced !== completedLevel) return;
 
-    roomManager.advanceLevel(room);
-    room.completingLevel = false;
-    io.to(room.code).emit(EVENTS.LOAD_NEXT_LEVEL, {
-      level: room.currentLevel,
-      seed: room.seed,
-      seedOffset: room.seedOffset,
-      playersCount: room.players.length
-    });
-    broadcastAll(io, roomManager, room);
+    room.completingLevel = true;
 
-    // El progreso se guarda con el nivel recién superado, no con el siguiente.
-    // Se identifica al agente por `uid` —el id de su cuenta en Laravel— y no por
-    // nombre: el perfil permite renombrarse a mitad de partida, y entonces la
-    // escritura no encontraría su fila.
-    //
-    // Los tres van en UNA petición. Antes era un `await` por participante, y ahora
-    // que cada uno sería un viaje HTTP eso serían tres esperas encadenadas justo
-    // donde los jugadores miran la pantalla de carga del nivel siguiente.
-    const results = await reportLevelCompletion({
-      level: completedLevel,
-      timeSpent,
-      playersCount,
-      participants: participants.map(p => ({
-        playerId: Number(p.uid),
-        damageTaken: p.damageTaken,
-        deaths: p.deaths
-      }))
-    });
+    try {
+      const timeSpent = Math.max(0, Math.min(60 * 60, Number(payload.timeSpent) || 0));
+      const playersCount = room.players.length;
 
-    // A quién mandar cada resultado. La API responde por playerId y el socket al
-    // que hay que emitir lo sabe solo este proceso.
-    const socketByPlayerId = new Map(participants.map(p => [Number(p.uid), p.socketId]));
+      // Los contadores del nivel se copian ANTES de avanzar: `advanceLevel` los
+      // reinicia, y son justo lo que necesitan los logros del nivel recién superado.
+      const participants = room.players.map(p => ({
+        uid: p.uid,
+        name: p.name,
+        socketId: p.socketId,
+        damageTaken: p.levelDamageTaken,
+        deaths: p.levelDeaths
+      }));
 
-    for (const result of results) {
-      const socketId = socketByPlayerId.get(Number(result.playerId));
-      if (!socketId) continue;
+      roomManager.advanceLevel(room);
+      io.to(room.code).emit(EVENTS.LOAD_NEXT_LEVEL, {
+        level: room.currentLevel,
+        seed: room.seed,
+        seedOffset: room.seedOffset,
+        playersCount: room.players.length
+      });
+      broadcastAll(io, roomManager, room);
 
-      // El nivel máximo se refresca aquí para que la siguiente sala que cree este
-      // jugador arranque donde toca, sin volver a preguntar a la API.
-      if (Number(result.playerId) === Number(uid) && result.stats) {
-        socket.user.maxLevel = result.stats.maxLevelReached;
-      }
-
-      io.to(socketId).emit(EVENTS.USER_PROGRESS_UPDATED, result.stats);
-      if (result.unlocked.length > 0) {
-        io.to(socketId).emit(EVENTS.ACHIEVEMENT_UNLOCKED, { keys: result.unlocked });
-      }
+      await reportProgress({ io, socket, uid, completedLevel, timeSpent, playersCount, participants });
+    } finally {
+      room.completingLevel = false;
     }
   });
 
@@ -139,4 +112,51 @@ export function registerGameHandlers(io, socket, roomManager) {
       shieldMs: Math.max(0, player.shieldedUntil - Date.now())
     });
   });
+}
+
+/**
+ * Reporta el nivel superado a Laravel y reparte los resultados.
+ *
+ * Separado del manejador porque es la parte lenta —una petición HTTP— y así se ve
+ * de un vistazo qué queda dentro del pestillo de reentrada y qué no.
+ */
+async function reportProgress({ io, socket, uid, completedLevel, timeSpent, playersCount, participants }) {
+  // El progreso se guarda con el nivel recién superado, no con el siguiente.
+  // Se identifica al agente por `uid` —el id de su cuenta en Laravel— y no por
+  // nombre: el perfil permite renombrarse a mitad de partida, y entonces la
+  // escritura no encontraría su fila.
+  //
+  // Los tres van en UNA petición. Antes era un `await` por participante, y ahora
+  // que cada uno sería un viaje HTTP eso serían tres esperas encadenadas justo
+  // donde los jugadores miran la pantalla de carga del nivel siguiente.
+  const results = await reportLevelCompletion({
+    level: completedLevel,
+    timeSpent,
+    playersCount,
+    participants: participants.map(p => ({
+      playerId: Number(p.uid),
+      damageTaken: p.damageTaken,
+      deaths: p.deaths
+    }))
+  });
+
+  // A quién mandar cada resultado. La API responde por playerId y el socket al
+  // que hay que emitir lo sabe solo este proceso.
+  const socketByPlayerId = new Map(participants.map(p => [Number(p.uid), p.socketId]));
+
+  for (const result of results) {
+    const socketId = socketByPlayerId.get(Number(result.playerId));
+    if (!socketId) continue;
+
+    // El nivel máximo se refresca aquí para que la siguiente sala que cree este
+    // jugador arranque donde toca, sin volver a preguntar a la API.
+    if (Number(result.playerId) === Number(uid) && result.stats) {
+      socket.user.maxLevel = result.stats.maxLevelReached;
+    }
+
+    io.to(socketId).emit(EVENTS.USER_PROGRESS_UPDATED, result.stats);
+    if (result.unlocked.length > 0) {
+      io.to(socketId).emit(EVENTS.ACHIEVEMENT_UNLOCKED, { keys: result.unlocked });
+    }
+  }
 }

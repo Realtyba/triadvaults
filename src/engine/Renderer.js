@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { PostFX } from './PostFX.js';
 import { quality } from './QualitySettings.js';
+import { setMaxAnisotropy, disposeTextureCache } from './textures.js';
+import { disposeSharedGeometry } from '../procedural/DungeonGen.js';
 
 /** Color de fondo y niebla por defecto, hasta que un nivel imponga su tema. */
 const DEFAULT_ATMOSPHERE = { bg: 0x060812, fogDensity: 0.035 };
@@ -43,6 +45,12 @@ export class EngineRenderer {
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
+
+      // Solo aquí se sabe cuántas muestras admite la GPU real. Las texturas se
+      // creaban con un 4 fijo y, al quedar cacheadas, ese valor ya no cambiaba
+      // nunca: el suelo hormigueaba igual en todos los presets.
+      setMaxAnisotropy(renderer.capabilities.getMaxAnisotropy());
+
       return renderer;
     } catch (err) {
       console.error('[renderer] WebGL no disponible:', err.message);
@@ -82,6 +90,11 @@ export class EngineRenderer {
     if (this.postFX) this.postFX.triggerFlash(intensity, colorHex);
   }
 
+  /** Cierra la imagen según la cercanía del fantasma. Ver `PostFX.setDread`. */
+  setDread(amount) {
+    if (this.postFX) this.postFX.setDread(amount);
+  }
+
   applyQuality() {
     if (!this.renderer) return;
     this.renderer.setPixelRatio(this.targetPixelRatio());
@@ -111,5 +124,11 @@ export class EngineRenderer {
     if (this.postFX) this.postFX.destroy();
     if (this.unsubscribeQuality) this.unsubscribeQuality();
     if (this.renderer) this.renderer.dispose();
+
+    // Los recursos que sobreviven al nivel se sueltan aquí, que es el único sitio
+    // donde consta que ya no hay escena. `disposeTextureCache` estaba escrita y
+    // exportada pero no la llamaba nadie.
+    disposeTextureCache();
+    disposeSharedGeometry();
   }
 }

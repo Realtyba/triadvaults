@@ -92,14 +92,26 @@ export async function runDuo(conn) {
   r.check(post.aEnB === post.aEnA, 'ambos clientes coinciden en la vida de cada agente',
     `B no ve bien la vida del host: ${post.aEnB} vs ${post.aEnA}`);
 
-  // El fantasma debe relevar objetivo, no fijarse en el host.
-  const targets = new Set();
-  for (let i = 0; i < 12; i++) {
-    targets.add(await A.evaluate(`window.gameApp.level.ghost.targetUid`));
-    await sleep(900);
-  }
-  r.check(targets.size >= 2, `el fantasma alterna objetivo: ${[...targets].join(' -> ')}`,
-    `el fantasma no cambia de objetivo (siempre ${[...targets]})`);
+  // Antes había un solo fantasma y se le exigía ir alternando de objetivo. Esa
+  // prueba comprobaba el síntoma, no lo que importa: con un único cazador alguien
+  // tiene por fuerza que quedar sin vigilar en cada instante. Ahora hay uno por
+  // agente, así que lo que se verifica es que **nadie queda desatendido**.
+  await sleep(2000);
+  const hunt = await A.evaluate(`(() => {
+    const ghosts = window.gameApp.level.ghosts;
+    return { count: ghosts.length,
+             owners: ghosts.map(g => g.ownerUid),
+             targets: ghosts.map(g => g.targetUid) };
+  })()`);
+
+  r.check(hunt.count === 2, `hay un fantasma por agente (${hunt.count})`,
+    `se esperaban 2 fantasmas y hay ${hunt.count}`);
+  r.check(new Set(hunt.owners).size === hunt.count,
+    `cada fantasma tiene su presa asignada: ${hunt.owners.join(', ')}`,
+    `dos fantasmas comparten presa: ${hunt.owners.join(', ')}`);
+  r.check(new Set(hunt.targets.filter(Boolean)).size === hunt.count,
+    `los dos agentes están siendo perseguidos a la vez: ${hunt.targets.join(', ')}`,
+    `algún agente queda sin perseguidor: ${hunt.targets.join(', ')}`);
 
   await B.evaluate(`(window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), true)`);
   await sleep(400);

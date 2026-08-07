@@ -1,12 +1,22 @@
 /** Cuentas de prueba y utilidades de servidor compartidas por los escenarios e2e. */
+// El `.env` no se carga solo: estos scripts corren con node a secas, fuera del
+// servidor y fuera del build de Vite, que son los dos sitios donde sí se lee. Sin
+// esta línea `TRIADVAULTS_API_URL` llegaba vacía y las pruebas se iban al valor por
+// defecto, buscando la API en un puerto donde no había nadie mientras el juego
+// hablaba con la de verdad.
+import 'dotenv/config';
 import { spawn, execSync } from 'child_process';
 import { sleep } from './cdp.js';
 
 /**
  * Las cuentas viven en realtyba-api y las salas en el servidor de Node, así que
  * hay dos URL. Antes bastaba una porque era el mismo proceso.
+ *
+ * `TRIADVAULTS_API_URL` es la misma variable que usan el servidor y el cliente, así
+ * que las pruebas apuntan a donde apunta el juego sin configurar nada aparte;
+ * `API_URL` queda para forzar otra API en una ejecución suelta.
  */
-export const API_URL = (process.env.API_URL || process.env.TRIADVAULTS_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+export const API_URL = (process.env.API_URL || process.env.TRIADVAULTS_API_URL || 'http://localhost:8080').replace(/\/+$/, '');
 export const SOCKET_URL = (process.env.SOCKET_URL || 'http://localhost:3001').replace(/\/+$/, '');
 // El puerto lo fija `vite.config.js`; apuntar al 5173 por defecto de Vite hacía
 // que la comprobación previa fallase con el servidor de desarrollo funcionando.

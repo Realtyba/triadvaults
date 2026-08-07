@@ -1,8 +1,7 @@
 import { View } from './View.js';
 import { esc } from '../dom.js';
 import { renderPlayerCard, renderEmptySlot } from '../components/PlayerCard.js';
-
-const MAX_SLOTS = 3;
+import { MAX_PLAYERS } from '../../../shared/constants.js';
 
 export class LobbyView extends View {
   static keys = ['room', 'lang', 'connection'];
@@ -13,7 +12,7 @@ export class LobbyView extends View {
 
     const players = room.players || [];
     const isHost = this.ctx.isLocalHost();
-    const emptySlots = Math.max(0, MAX_SLOTS - players.length);
+    const emptySlots = Math.max(0, MAX_PLAYERS - players.length);
     const waiting = players.length < 2;
 
     return `

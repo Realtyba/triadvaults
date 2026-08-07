@@ -13,6 +13,20 @@ const STORAGE_KEY = 'triad_quality';
 
 export const QUALITY_LEVELS = ['bajo', 'medio', 'alto', 'ultra'];
 
+/**
+ * Nota sobre el coste real.
+ *
+ * Las texturas del juego ocupan unos 3,5 MB en total: son tres, procedurales y
+ * pequeñas. Prácticamente **todo** el consumo de vídeo son los búferes de render
+ * intermedios, y todos escalan con el CUADRADO del ratio de píxel. Por eso el
+ * preset alto no es "el mismo juego con más detalle": es el mismo juego pintado
+ * cuatro veces más grande.
+ *
+ * Con `pixelRatio: 2`, sombras de 4096 y las dos técnicas de suavizado a la vez,
+ * ULTRA pedía unos 330 MB en una pantalla de 1080p —y superaba el giga en 4K—, que
+ * es cuando una gráfica integrada empieza a fallar reservas y aparecen las bandas y
+ * el muestreo sucio que se leían como "las texturas se ven raras".
+ */
 const PRESETS = {
   bajo: {
     label: 'BAJO',
@@ -21,12 +35,17 @@ const PRESETS = {
     shadowMapSize: 512,
     postprocessing: false,
     bloomStrength: 0,
+    bloomThreshold: 0.62,
     antialias: false,
     smaa: false,
     ambientParticles: 0,
     impactParticles: 0,
     cornerLights: 2,
-    lightBreathing: false
+    lightBreathing: false,
+
+    ghostShroud: false,
+    ghostTrail: false,
+    dreadPostFX: false
   },
   medio: {
     label: 'MEDIO',
@@ -35,12 +54,17 @@ const PRESETS = {
     shadowMapSize: 1024,
     postprocessing: true,
     bloomStrength: 0.5,
+    bloomThreshold: 0.62,
     antialias: false,
     smaa: false,
     ambientParticles: 120,
     impactParticles: 12,
     cornerLights: 4,
-    lightBreathing: true
+    lightBreathing: true,
+
+    ghostShroud: true,
+    ghostTrail: false,
+    dreadPostFX: true
   },
   alto: {
     label: 'ALTO',
@@ -49,26 +73,46 @@ const PRESETS = {
     shadowMapSize: 2048,
     postprocessing: true,
     bloomStrength: 0.75,
+    // Sube con la intensidad: si no, cuanto más fuerte es el bloom más superficies
+    // arrastra consigo, y la rejilla emisiva del suelo es la primera en caer.
+    bloomThreshold: 0.7,
     antialias: true,
-    smaa: true,
+    smaa: false, // ya hay MSAA; ver el comentario de `ultra`
     ambientParticles: 260,
     impactParticles: 22,
     cornerLights: 4,
-    lightBreathing: true
+    lightBreathing: true,
+
+    ghostShroud: true,
+    ghostTrail: true,
+    dreadPostFX: true
   },
   ultra: {
     label: 'ULTRA',
-    pixelRatio: 2,
+    // 1.5 en vez de 2: en una pantalla de alta densidad la diferencia no se
+    // aprecia y recorta cerca del 45% de la memoria de vídeo.
+    pixelRatio: 1.5,
     shadows: true,
-    shadowMapSize: 4096,
+    // 4096 daba un téxel ocho veces más fino que en el preset bajo mientras el
+    // sesgo de sombra seguía siendo constante, así que el contacto de las sombras
+    // se despegaba del suelo. 2048 con sesgo proporcional se ve mejor y cuesta la
+    // mitad. Ver `Lighting.applyShadowBias`.
+    shadowMapSize: 2048,
     postprocessing: true,
-    bloomStrength: 0.95,
+    bloomStrength: 0.8,
+    bloomThreshold: 0.75,
     antialias: true,
-    smaa: true,
+    // MSAA y SMAA hacen el mismo trabajo. Tenerlos los dos no suavizaba el doble:
+    // sumaba dos búferes a resolución completa por la cara.
+    smaa: false,
     ambientParticles: 420,
     impactParticles: 34,
     cornerLights: 6,
-    lightBreathing: true
+    lightBreathing: true,
+
+    ghostShroud: true,
+    ghostTrail: true,
+    dreadPostFX: true
   }
 };
 

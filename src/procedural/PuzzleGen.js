@@ -33,6 +33,10 @@ export class PuzzleGenerator {
     return this.archetype ? this.archetype.exitDoor : null;
   }
 
+  get exitDoors() {
+    return this.archetype ? this.archetype.exitDoors : [];
+  }
+
   /** Clave i18n del objetivo, que depende del arquetipo y del número de agentes. */
   get objectiveKey() {
     return this.archetype ? this.archetype.objectiveKey : 'solo_objective';
@@ -82,6 +86,10 @@ export class PuzzleGenerator {
 
   get exitPosition() {
     return this.archetype ? this.archetype.exitPosition : null;
+  }
+
+  get exitPositions() {
+    return this.archetype ? this.archetype.exitPositions : [];
   }
 
   clear() {

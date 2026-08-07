@@ -6,11 +6,27 @@ import {
   createPlayer,
   createRoomState,
   isJoinable,
-  toRoomSummary
+  toRoomSummary,
+  sanitizeVec3,
+  sanitizeAngle,
+  newSeed
 } from './roomState.js';
+import { CODE_LENGTH } from '../../shared/constants.js';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const CODE_LENGTH = 4;
+
+/**
+ * Cuánto se recuerda que alguien abandonó a propósito.
+ *
+ * El dato solo sirve para no reengancharle en el instante en que su socket vuelve
+ * a conectar, que ocurre en segundos. Sin caducidad el registro crecía para
+ * siempre: una entrada por cada usuario que hubiese pulsado "Salir" desde que
+ * arrancó el proceso, sin nada que las retirase nunca.
+ */
+const INTENTIONAL_LEAVE_TTL_MS = 60_000;
+
+/** Cada cuánto se barren salas cuyos ocupantes se fueron sin que nadie lo registrase. */
+const SWEEP_INTERVAL_MS = 60_000;
 
 /**
  * Fuente única de verdad del estado multijugador.
@@ -24,8 +40,20 @@ export class RoomManager {
     this.rooms = new Map();
     /** @type {Map<string, NodeJS.Timeout>} uid -> timeout de expulsión */
     this.disconnectTimers = new Map();
-    /** uids que abandonaron a propósito: no deben ser reenganchados al reconectar */
-    this.intentionalLeaves = new Set();
+    /** @type {Map<string, number>} uid -> instante en que abandonó a propósito */
+    this.intentionalLeaves = new Map();
+
+    /**
+     * Índice uid -> código de sala.
+     *
+     * `findRoomByUid` era un recorrido por todas las salas y todos sus jugadores, y
+     * se llamaba en cada conexión, alta, baja, desconexión y dentro del temporizador
+     * de gracia. Con salas suficientes ese barrido pasa a notarse justo en los
+     * momentos de más movimiento.
+     */
+    this.uidToRoom = new Map();
+
+    this.sweepTimer = null;
   }
 
   // ---------------------------------------------------------------- lookup
@@ -37,10 +65,16 @@ export class RoomManager {
 
   /** Sala en la que figura este uid, si alguna. */
   findRoomByUid(uid) {
-    for (const room of this.rooms.values()) {
-      if (room.players.some(p => p.uid === uid)) return room;
+    const code = this.uidToRoom.get(uid);
+    if (!code) return null;
+
+    const room = this.rooms.get(code);
+    // El índice apuntaba a una sala ya borrada: se limpia en vez de mentir.
+    if (!room) {
+      this.uidToRoom.delete(uid);
+      return null;
     }
-    return null;
+    return room;
   }
 
   findPlayer(room, uid) {
@@ -78,9 +112,14 @@ export class RoomManager {
 
     this.intentionalLeaves.delete(uid);
     this.rooms.set(room.code, room);
+    this.uidToRoom.set(uid, room.code);
     return { room, reconnected: false };
   }
 
+  /**
+   * @returns {{room, player, reconnected}|{error: string}|
+   *           {error: string, previousRoom: object, previousDeleted: boolean}}
+   */
   joinRoom({ code, uid, name, socketId }) {
     const room = this.getRoom(code);
     if (!room) return { error: 'El nodo sala especificado no existe.' };
@@ -92,13 +131,19 @@ export class RoomManager {
       return { room, player: member, reconnected: true };
     }
 
-    // Salir de cualquier sala anterior antes de entrar a esta (evita membresías dobles).
-    const previous = this.findRoomByUid(uid);
-    if (previous) this.removePlayer(previous.code, uid);
-
+    // El aforo se comprueba ANTES de sacar a nadie de su sala anterior.
+    //
+    // Al revés —como estaba— intentar entrar en una sala llena te expulsaba de la
+    // tuya: se te daba de baja, tu sala podía quedarse vacía y borrarse, y el
+    // camino de error volvía sin difundir nada, así que el resto de clientes
+    // seguía viendo una sala que ya no existía.
     if (!isJoinable(room)) {
       return { error: `La sala está completa (Máximo ${MAX_PLAYERS} agentes).` };
     }
+
+    // Ahora sí: salir de la anterior (evita membresías dobles).
+    const previous = this.findRoomByUid(uid);
+    const left = previous ? this.removePlayer(previous.code, uid) : null;
 
     const player = createPlayer({
       uid,
@@ -108,9 +153,16 @@ export class RoomManager {
       isHost: false
     });
     room.players.push(player);
+    this.uidToRoom.set(uid, room.code);
     this.intentionalLeaves.delete(uid);
 
-    return { room, player, reconnected: false };
+    return {
+      room,
+      player,
+      reconnected: false,
+      // Quien llame debe refrescar también la sala que se acaba de quedar coja.
+      previousRoom: left && !left.deleted ? left.room : null
+    };
   }
 
   /** Índice de color/spawn libre más bajo, para no repetir color al entrar y salir. */
@@ -127,13 +179,25 @@ export class RoomManager {
    * Solo procede si no abandonó a propósito y la sala sigue viva.
    */
   reconnectPlayer({ uid, socketId }) {
-    if (this.intentionalLeaves.has(uid)) return null;
+    if (this.hasLeftIntentionally(uid)) return null;
 
     const room = this.findRoomByUid(uid);
     if (!room) return null;
 
     this.attachSocket(room, uid, socketId);
     return room;
+  }
+
+  /** ¿Abandonó a propósito hace poco? Las marcas viejas se descartan al consultarlas. */
+  hasLeftIntentionally(uid) {
+    const leftAt = this.intentionalLeaves.get(uid);
+    if (leftAt === undefined) return false;
+
+    if (Date.now() - leftAt > INTENTIONAL_LEAVE_TTL_MS) {
+      this.intentionalLeaves.delete(uid);
+      return false;
+    }
+    return true;
   }
 
   /** Asocia un socket nuevo a un jugador existente y cancela su expulsión pendiente. */
@@ -157,6 +221,8 @@ export class RoomManager {
 
     room.players.splice(idx, 1);
     this.cancelRemoval(uid);
+    // Solo si el índice sigue apuntando aquí: al cambiar de sala ya se reasignó.
+    if (this.uidToRoom.get(uid) === room.code) this.uidToRoom.delete(uid);
 
     if (room.players.length === 0) {
       this.rooms.delete(room.code);
@@ -179,7 +245,7 @@ export class RoomManager {
     const room = this.findRoomByUid(uid);
     if (!room) return null;
 
-    this.intentionalLeaves.add(uid);
+    this.intentionalLeaves.set(uid, Date.now());
     const code = room.code;
     const result = this.removePlayer(code, uid);
     return result ? { ...result, code } : null;
@@ -190,13 +256,21 @@ export class RoomManager {
   /**
    * Marca al jugador como desconectado de inmediato (para que la sala lo vea)
    * y programa su expulsión al agotarse el periodo de gracia.
+   *
+   * `socketId` es el socket que se está cayendo. Comprobarlo importa: con dos
+   * pestañas de la misma cuenta, la segunda se adueña del `socketId` del jugador y
+   * al cerrar la primera se armaba igualmente el temporizador de expulsión, así
+   * que quince segundos después el juego echaba a alguien que estaba jugando.
    */
-  markDisconnected(uid, onExpired) {
+  markDisconnected(uid, onExpired, socketId = null) {
     const room = this.findRoomByUid(uid);
     if (!room) return null;
 
     const player = this.findPlayer(room, uid);
     if (!player) return null;
+
+    // Se cayó un socket antiguo y el jugador ya tiene otro activo: no pasa nada.
+    if (socketId && player.socketId !== socketId) return null;
 
     player.connected = false;
     player.disconnectedAt = Date.now();
@@ -211,6 +285,7 @@ export class RoomManager {
       uid,
       setTimeout(() => {
         this.disconnectTimers.delete(uid);
+        this.intentionalLeaves.delete(uid);
 
         // Puede haber vuelto (y reconectado) o haber salido ya por otra vía.
         const current = this.findRoomByUid(uid);
@@ -236,9 +311,8 @@ export class RoomManager {
 
   // ------------------------------------------------------ estado de juego
 
-  startGame(room) {
-    room.inGame = true;
-    room.seedOffset = 0;
+  /** Vida, estado y contadores de logros a cero. Lo comparten empezar y avanzar. */
+  resetPlayersForLevel(room) {
     room.players.forEach(p => {
       p.health = MAX_HEALTH;
       p.alive = true;
@@ -249,18 +323,17 @@ export class RoomManager {
     return room;
   }
 
+  startGame(room) {
+    room.inGame = true;
+    room.seedOffset = 0;
+    return this.resetPlayersForLevel(room);
+  }
+
   advanceLevel(room) {
     room.currentLevel += 1;
-    room.seed = Math.floor(Math.random() * 1_000_000);
+    room.seed = newSeed();
     room.seedOffset = 0;
-    room.players.forEach(p => {
-      p.health = MAX_HEALTH;
-      p.alive = true;
-      p.shieldedUntil = 0;
-      p.levelDamageTaken = 0;
-      p.levelDeaths = 0;
-    });
-    return room;
+    return this.resetPlayersForLevel(room);
   }
 
   regenerateLevel(room) {
@@ -268,11 +341,23 @@ export class RoomManager {
     return room;
   }
 
+  /**
+   * Guarda la posición que reporta un cliente, ya saneada.
+   *
+   * Se copian los tres números en vez de quedarse con el objeto recibido: ver
+   * `sanitizeVec3`. Si el dato no es usable se ignora y se conserva el anterior,
+   * que es preferible a teletransportar al agente al origen.
+   */
   updatePlayerTransform(room, uid, position, rotationY) {
     const player = this.findPlayer(room, uid);
     if (!player) return null;
-    if (position) player.position = position;
-    if (typeof rotationY === 'number') player.rotationY = rotationY;
+
+    const safePosition = sanitizeVec3(position);
+    if (safePosition) player.position = safePosition;
+
+    const safeAngle = sanitizeAngle(rotationY);
+    if (safeAngle !== null) player.rotationY = safeAngle;
+
     return player;
   }
 
@@ -308,5 +393,58 @@ export class RoomManager {
 
   listRooms() {
     return Array.from(this.rooms.values()).map(toRoomSummary);
+  }
+
+  // ------------------------------------------------------------- barrido
+
+  /**
+   * Red de seguridad contra salas zombi.
+   *
+   * El camino normal —temporizador de gracia por jugador— ya borra la sala cuando
+   * se va el último. Esto solo cubre el caso en que ese temporizador se pierda
+   * (una excepción a mitad del callback, un reinicio a medias): sin nadie que los
+   * retire, esos objetos se quedarían ocupando memoria para siempre en un servidor
+   * que precisamente no la tiene de sobra.
+   *
+   * @returns {number} salas retiradas
+   */
+  sweepStaleRooms(now = Date.now()) {
+    const stale = [];
+
+    for (const room of this.rooms.values()) {
+      const abandoned = room.players.every(
+        p => !p.connected && p.disconnectedAt && now - p.disconnectedAt > DISCONNECT_GRACE_MS * 2
+      );
+      if (room.players.length === 0 || abandoned) stale.push(room);
+    }
+
+    stale.forEach(room => {
+      room.players.forEach(p => {
+        this.cancelRemoval(p.uid);
+        if (this.uidToRoom.get(p.uid) === room.code) this.uidToRoom.delete(p.uid);
+      });
+      this.rooms.delete(room.code);
+      console.log(`[Sala] ${room.code} retirada por abandono`);
+    });
+
+    for (const [uid, leftAt] of this.intentionalLeaves) {
+      if (now - leftAt > INTENTIONAL_LEAVE_TTL_MS) this.intentionalLeaves.delete(uid);
+    }
+
+    return stale.length;
+  }
+
+  startSweeper(intervalMs = SWEEP_INTERVAL_MS) {
+    if (this.sweepTimer) return this.sweepTimer;
+    this.sweepTimer = setInterval(() => this.sweepStaleRooms(), intervalMs);
+    // No debe mantener vivo el proceso solo por existir.
+    if (typeof this.sweepTimer.unref === 'function') this.sweepTimer.unref();
+    return this.sweepTimer;
+  }
+
+  stopSweeper() {
+    if (!this.sweepTimer) return;
+    clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
   }
 }

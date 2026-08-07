@@ -17,7 +17,7 @@
  *
  * Uso: node scripts/validate-levels.js [niveles] [semillas]
  */
-import { generateLayout } from '../src/procedural/LayoutGen.js';
+import { generateLayout, exitCountForLevel } from '../src/procedural/LayoutGen.js';
 import { selectPuzzleType, PUZZLE_TYPES } from '../src/procedural/puzzles/index.js';
 
 const LEVELS = parseInt(process.argv[2] || '50', 10);
@@ -28,9 +28,18 @@ function checkLayout(layout, level, seed, plateCount) {
   const problems = [];
   const grid = layout.grid;
 
-  // 1. La salida tiene que ser alcanzable desde el spawn.
-  if (!grid.isReachable(layout.exitCell.col, layout.exitCell.row)) {
-    problems.push('la salida no es alcanzable desde el punto de aparición');
+  // 1. TODAS las salidas tienen que ser alcanzables desde el spawn. Basta una para
+  //    poder terminar, pero una compuerta visible e inaccesible se lee como un fallo.
+  layout.exitCells.forEach((cell, index) => {
+    if (!grid.isReachable(cell.col, cell.row)) {
+      problems.push(`la salida ${index} no es alcanzable desde el punto de aparición`);
+    }
+  });
+
+  if (layout.exitCells.length !== exitCountForLevel(level)) {
+    problems.push(
+      `el nivel ${level} pide ${exitCountForLevel(level)} salidas y se colocaron ${layout.exitCells.length}`
+    );
   }
 
   // 2. Ningún muro puede pisar ni tocar a otro.
@@ -57,9 +66,9 @@ function checkLayout(layout, level, seed, plateCount) {
   if (grid.isBlocked(layout.spawnCell.col, layout.spawnCell.row)) {
     problems.push('el punto de aparición está tapiado');
   }
-  if (grid.isBlocked(layout.exitCell.col, layout.exitCell.row)) {
-    problems.push('la salida está tapiada');
-  }
+  layout.exitCells.forEach((cell, index) => {
+    if (grid.isBlocked(cell.col, cell.row)) problems.push(`la salida ${index} está tapiada`);
+  });
 
   // 5. Espacio jugable suficiente.
   const openRatio = grid.countFree() / (grid.cols * grid.rows);
@@ -74,6 +83,17 @@ let checked = 0;
 let failures = 0;
 let totalOpen = 0;
 let maxAttempts = 0;
+
+/**
+ * Reparto real de las salidas.
+ *
+ * Antes la salida caía siempre en la columna central, lo que en coordenadas de
+ * mundo daba x = 1.0 exacto en todos los niveles y con todas las semillas. Una
+ * aserción del tipo "es alcanzable" pasaba igual de bien entonces que ahora, así
+ * que hace falta medir explícitamente que las posiciones se reparten.
+ */
+const exitColumns = new Set();
+const exitPositionsSeen = new Set();
 const usage = new Map(PUZZLE_TYPES.map(type => [type.key, 0]));
 
 for (let level = 1; level <= LEVELS; level++) {
@@ -104,6 +124,23 @@ for (let level = 1; level <= LEVELS; level++) {
       const layout = generateLayout(level, baseSeed, 0, nodeCount);
       const { problems, openRatio } = checkLayout(layout, level, seed, nodeCount);
 
+      // Determinismo de la colocación. Es LA comprobación crítica de este cambio:
+      // el servidor solo envía la semilla y cada cliente reconstruye la sala por su
+      // cuenta, así que si el sorteo de salidas no fuese reproducible, cada jugador
+      // vería las compuertas en un sitio distinto y nada lo delataría hasta que uno
+      // cruzase una puerta que para los demás no existe.
+      const twin = generateLayout(level, baseSeed, 0, nodeCount);
+      const same =
+        twin.exitCells.length === layout.exitCells.length &&
+        twin.exitCells.every((c, i) => c.col === layout.exitCells[i].col && c.row === layout.exitCells[i].row) &&
+        twin.spawnCell.col === layout.spawnCell.col &&
+        twin.spawnCell.row === layout.spawnCell.row;
+
+      if (!same) problems.push('la colocación de aparición/salidas no es determinista');
+
+      layout.exitCells.forEach(cell => exitColumns.add(cell.col));
+      layout.exitCells.forEach(cell => exitPositionsSeen.add(`${cell.col},${cell.row}`));
+
       checked++;
       totalOpen += openRatio;
       maxAttempts = Math.max(maxAttempts, layout.attempts || 1);
@@ -128,10 +165,20 @@ if (unused.length > 0) {
   console.error(`✗ arquetipos que nunca se seleccionaron: ${unused.join(', ')}`);
 }
 
+// Las salidas tienen que repartirse de verdad. Con el comportamiento anterior
+// —columna central siempre— esto habría dado 1 columna y habría fallado aquí.
+if (exitColumns.size < 5) {
+  failures++;
+  console.error(
+    `✗ las salidas solo aparecen en ${exitColumns.size} columna(s) distinta(s): no se están repartiendo`
+  );
+}
+
 console.log('');
 console.log(`Trazados comprobados : ${checked}`);
 console.log(`Espacio libre medio  : ${((totalOpen / checked) * 100).toFixed(1)}%`);
 console.log(`Reintentos máximos   : ${maxAttempts}`);
+console.log(`Celdas de salida     : ${exitPositionsSeen.size} distintas, en ${exitColumns.size} columnas`);
 console.log('Reparto de arquetipos:');
 for (const [key, count] of usage) {
   console.log(`  ${key.padEnd(9)} ${String(count).padStart(5)}  (${((count / checked) * 100).toFixed(1)}%)`);

@@ -1,3 +1,5 @@
+import { clamp } from '../utils/math.js';
+
 const ESCAPE_MAP = {
   '&': '&amp;',
   '<': '&lt;',
@@ -30,7 +32,7 @@ export function setText(node, value) {
 }
 
 export function setWidth(node, percent) {
-  if (node) node.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  if (node) node.style.width = `${clamp(percent, 0, 100)}%`;
 }
 
 export function toggleClass(node, className, on) {

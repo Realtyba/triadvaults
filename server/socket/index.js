@@ -54,6 +54,11 @@ async function admitPlayer(socket) {
 export function registerSocketLayer(io) {
   const roomManager = new RoomManager();
 
+  // Red de seguridad contra salas que se queden sin nadie sin que ningún
+  // temporizador lo registre. En un servidor pequeño, memoria que no se recupera
+  // es memoria que acaba tirando el proceso.
+  roomManager.startSweeper();
+
   io.use(socketAuthMiddleware);
 
   io.use(async (socket, next) => {
@@ -80,10 +85,17 @@ export function registerSocketLayer(io) {
     registerSyncHandlers(io, socket, roomManager);
 
     socket.on('disconnect', reason => {
-      const affected = roomManager.markDisconnected(uid, expired => {
-        if (expired && !expired.deleted) broadcastRoom(io, expired.room);
-        broadcastRoomList(io, roomManager);
-      });
+      // Se pasa `socket.id` para no armar la expulsión cuando lo que se cae es un
+      // socket viejo de la misma cuenta (dos pestañas): en ese caso el jugador
+      // sigue conectado por otro y no hay nada que hacer.
+      const affected = roomManager.markDisconnected(
+        uid,
+        expired => {
+          if (expired && !expired.deleted) broadcastRoom(io, expired.room);
+          broadcastRoomList(io, roomManager);
+        },
+        socket.id
+      );
 
       // La sala ve el hueco de inmediato, sin esperar al periodo de gracia.
       if (affected) broadcastAll(io, roomManager, affected);

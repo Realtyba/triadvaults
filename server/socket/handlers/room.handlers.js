@@ -1,13 +1,10 @@
 import { EVENTS } from '../../../shared/events.js';
 import { toRoomPayload } from '../../rooms/roomState.js';
-import { broadcastAll, broadcastRoomList } from '../broadcast.js';
+import { broadcastAll, broadcastRoom, broadcastRoomList, LOBBY_CHANNEL } from '../broadcast.js';
+import { createHandlerContext } from './context.js';
 
 export function registerRoomHandlers(io, socket, roomManager) {
-  const { id: uid, username } = socket.user;
-
-  const ack = (callback, payload) => {
-    if (typeof callback === 'function') callback(payload);
-  };
+  const { uid, username, ack, fail } = createHandlerContext(socket, roomManager);
 
   socket.on(EVENTS.CREATE_ROOM, (payload, callback) => {
     // El nivel sale de la cuenta, no del cliente: nadie decide en qué nivel empieza.
@@ -37,10 +34,17 @@ export function registerRoomHandlers(io, socket, roomManager) {
       socketId: socket.id
     });
 
-    if (result.error) return ack(callback, { success: false, error: result.error });
+    if (result.error) return fail(callback, result.error);
 
-    const { room } = result;
+    const { room, previousRoom } = result;
     socket.join(room.code);
+
+    // La sala que se acaba de dejar tiene ahora un hueco: sus miembros deben verlo.
+    if (previousRoom) {
+      socket.leave(previousRoom.code);
+      broadcastRoom(io, previousRoom);
+    }
+
     console.log(`[Sala] ${username} entró en ${room.code}${room.inGame ? ' (partida en curso)' : ''}`);
 
     broadcastAll(io, roomManager, room);
@@ -58,21 +62,34 @@ export function registerRoomHandlers(io, socket, roomManager) {
     ack(callback, { success: true });
   });
 
+  // Pedir la lista es la señal de que este cliente está mirando el navegador de
+  // salas: a partir de aquí se le mandan las actualizaciones, y no antes.
   socket.on(EVENTS.GET_ROOMS, (payload, callback) => {
+    socket.join(LOBBY_CHANNEL);
     ack(callback, roomManager.listRooms());
   });
 
-  socket.on(EVENTS.START_GAME, (payload = {}) => {
+  socket.on(EVENTS.START_GAME, (payload = {}, callback) => {
     const room = roomManager.getRoom(payload.roomCode);
-    if (!room || !roomManager.isHost(room, uid)) return;
+    if (!room) return fail(callback, 'El nodo sala especificado no existe.');
+    if (!roomManager.findPlayer(room, uid)) return fail(callback, 'No perteneces a esta sala.');
+    if (!roomManager.isHost(room, uid)) return fail(callback, 'Solo el anfitrión puede iniciar.');
 
     roomManager.startGame(room);
+
+    // En partida no hay navegador de salas que refrescar. Salir del canal evita
+    // que los agentes reciban el catálogo entero cada vez que alguien, en
+    // cualquier otra sala, entra o sale.
+    io.in(room.code).socketsLeave(LOBBY_CHANNEL);
+
+    const payloadForRoom = toRoomPayload(room);
     io.to(room.code).emit(EVENTS.GAME_STARTED, {
       level: room.currentLevel,
       seed: room.seed,
       seedOffset: room.seedOffset,
-      players: toRoomPayload(room).players
+      players: payloadForRoom.players
     });
     broadcastAll(io, roomManager, room);
+    ack(callback, { success: true });
   });
 }

@@ -1,7 +1,15 @@
 import { PuzzleArchetype } from './PuzzleArchetype.js';
+import { paintNode } from './paint.js';
+import { PALETTE } from '../../engine/materials.js';
 
 /** Colores del orden, del primero al último. Se leen sin necesidad de números. */
-const ORDER_COLORS = [0x00ff66, 0x00f3ff, 0xffaa00, 0xff0077, 0x9d00ff];
+const ORDER_COLORS = [
+  PALETTE.EMERALD,
+  PALETTE.CYAN,
+  PALETTE.AMBER,
+  PALETTE.MAGENTA,
+  PALETTE.PURPLE
+];
 
 /** Margen tras pisar una placa antes de que cuente como "sigo aquí". */
 const RELEASE_MS = 250;
@@ -42,11 +50,7 @@ export class SequenceLock extends PuzzleArchetype {
 
   /** El color indica el turno; el brillo, si ya está superado. */
   paint(node, done) {
-    const color = ORDER_COLORS[node.data.order];
-    node.padMat.color.setHex(color);
-    node.padMat.emissive.setHex(color);
-    node.padMat.emissiveIntensity = done ? 1.2 : 0.25;
-    node.pad.position.y = done ? 0.04 : 0.1;
+    paintNode(node, done, { color: ORDER_COLORS[node.data.order] });
   }
 
   evaluate(players) {

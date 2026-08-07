@@ -23,8 +23,32 @@ export class ParticleField {
     this.impacts = null;
     this.impactCursor = 0;
     this.elapsed = 0;
+    this.burstColor = new THREE.Color();
 
     this.buildImpactPool();
+
+    // Era el único consumidor del preset que no escuchaba sus cambios: el pool se
+    // dimensionaba una vez en el constructor, así que cambiar de calidad a mitad de
+    // sesión no alteraba las partículas hasta la siguiente sala.
+    this.unsubscribeQuality = quality.subscribe(() => this.applyQuality());
+  }
+
+  applyQuality() {
+    if (this.impacts) {
+      this.scene.remove(this.impacts);
+      this.impacts.geometry.dispose();
+      this.impacts.material.dispose();
+      this.impacts = null;
+    }
+    this.impactCursor = 0;
+    this.buildImpactPool();
+
+    // El campo de ambiente se rehace con las medidas de la sala actual, si la hay.
+    if (this.ambient) {
+      const { sizeX, sizeZ } = this.ambient.userData;
+      const colorHex = this.ambient.material.color.getHex();
+      this.setupAmbient(sizeX, sizeZ, colorHex);
+    }
   }
 
   // ------------------------------------------------------------- ambiente
@@ -75,12 +99,17 @@ export class ParticleField {
     const positions = this.ambient.geometry.attributes.position;
     const { speeds } = this.ambient.userData;
 
+    // Se indexa el array directamente en vez de pasar por getX/setX/getY/setY.
+    // Con 420 motas eso eran unas 1.700 llamadas a función por fotograma solo para
+    // leer y escribir posiciones contiguas de un Float32Array.
+    const array = positions.array;
+
     for (let i = 0; i < speeds.length; i++) {
-      const y = positions.getY(i) + speeds[i] * delta * AMBIENT_DRIFT;
+      const base = i * 3;
+      const y = array[base + 1] + speeds[i] * delta * AMBIENT_DRIFT;
       // Deriva lateral distinta por partícula, o todas subirían en columnas rectas.
-      const x = positions.getX(i) + Math.sin(this.elapsed * 0.4 + i) * delta * 0.08;
-      positions.setY(i, y > 6.5 ? 0.2 : y);
-      positions.setX(i, x);
+      array[base] += Math.sin(this.elapsed * 0.4 + i) * delta * 0.08;
+      array[base + 1] = y > 6.5 ? 0.2 : y;
     }
     positions.needsUpdate = true;
   }
@@ -140,7 +169,7 @@ export class ParticleField {
   burst(position, colorHex = 0xffffff, { spread = 3.2, up = 2.6, count = null } = {}) {
     if (!this.impacts) return;
 
-    const color = new THREE.Color(colorHex);
+    const color = this.burstColor.setHex(colorHex);
     const total = count || this.burstSize;
     const capacity = this.impactLife.length;
 
@@ -204,6 +233,7 @@ export class ParticleField {
   }
 
   destroy() {
+    if (this.unsubscribeQuality) this.unsubscribeQuality();
     this.clearAmbient();
     if (this.impacts) {
       this.scene.remove(this.impacts);

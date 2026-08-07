@@ -1,4 +1,5 @@
 import { PuzzleArchetype } from './PuzzleArchetype.js';
+import { clampPlayers } from '../../../shared/constants.js';
 
 /**
  * Placas de presión simultáneas: el arquetipo original.
@@ -10,7 +11,7 @@ export class PressurePlates extends PuzzleArchetype {
   static key = 'plates';
 
   static nodeCount(playersCount) {
-    return Math.max(1, Math.min(playersCount, 3));
+    return clampPlayers(playersCount);
   }
 
   get objectiveKey() {

@@ -1,6 +1,26 @@
 import * as THREE from 'three';
 import { generateLayout, WALL_HEIGHT, WALL_THICKNESS } from './LayoutGen.js';
 import { createGridTexture, createWallRoughnessTexture } from '../engine/textures.js';
+import { disposeChildren, markShared } from '../engine/disposal.js';
+import { neonMaterial } from '../engine/materials.js';
+
+/**
+ * Cubo unidad compartido por todos los muros y molduras.
+ *
+ * Antes cada muro creaba su propia `BoxGeometry`: unas 66 por sala, más otras
+ * tantas al regenerar, cada una con su búfer en la GPU y su llamada de dibujo. Son
+ * todas cajas: basta con una y escalar la malla. Es la mayor rebaja de llamadas de
+ * dibujo del nivel, y se nota justo en las máquinas modestas.
+ *
+ * Va marcada como compartida para que la limpieza de nivel NO la libere: si
+ * `disposeChildren` la soltase al descargar la primera sala, la segunda se
+ * quedaría sin geometría. Se suelta en `disposeSharedGeometry`, al cerrar.
+ */
+const UNIT_BOX = markShared(new THREE.BoxGeometry(1, 1, 1));
+
+export function disposeSharedGeometry() {
+  UNIT_BOX.dispose();
+}
 
 /**
  * Construye la sala 3D a partir del trazado calculado por `LayoutGen`.
@@ -17,17 +37,7 @@ export class DungeonGenerator {
   }
 
   clear() {
-    while (this.group.children.length > 0) {
-      const obj = this.group.children[0];
-      obj.traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) {
-          const materials = Array.isArray(child.material) ? child.material : [child.material];
-          materials.forEach(m => m.dispose());
-        }
-      });
-      this.group.remove(obj);
-    }
+    disposeChildren(this.group);
     this.obstacleBoxes = [];
   }
 
@@ -59,10 +69,8 @@ export class DungeonGenerator {
     // La intensidad es contenida y se deja pasar por el mapeo de tonos: sin él, y
     // con valores altos, el color satura a cían puro y las molduras se ven como
     // pegatinas planas en vez de como luz.
-    const trimMat = new THREE.MeshStandardMaterial({
-      color: theme.color,
-      emissive: theme.color,
-      emissiveIntensity: 0.9,
+    const trimMat = neonMaterial(theme.color, {
+      intensity: 0.9,
       roughness: 0.35,
       metalness: 0.1
     });
@@ -79,6 +87,8 @@ export class DungeonGenerator {
       navGrid: layout.grid,
       plates: layout.plates,
       spawnPos: new THREE.Vector3(layout.spawn.x, 0, layout.spawn.z),
+      exitPositions: layout.exits.map(exit => new THREE.Vector3(exit.x, 0, exit.z)),
+      // Alias de la primera salida, para lo que aún razona con una sola.
       exitPos: new THREE.Vector3(layout.exit.x, 0, layout.exit.z),
       obstacleBoxes: this.obstacleBoxes
     };
@@ -92,8 +102,9 @@ export class DungeonGenerator {
    * leía como una herramienta de depuración superpuesta a la escena.
    */
   buildFloor(sizeX, sizeZ, theme) {
-    const gridTexture = createGridTexture(theme.color);
-    gridTexture.repeat.set(sizeX / 4, sizeZ / 4);
+    // La escala va en la petición, no se muta el objeto devuelto: la textura sale
+    // de un caché compartido y escribir en ella afecta a todo el que la use.
+    const gridTexture = createGridTexture(theme.color, 'default', { x: sizeX / 4, y: sizeZ / 4 });
 
     const floorGeo = new THREE.PlaneGeometry(sizeX, sizeZ);
     floorGeo.rotateX(-Math.PI / 2);
@@ -126,8 +137,13 @@ export class DungeonGenerator {
    */
   buildVoid(sizeX, sizeZ, theme) {
     const span = Math.max(sizeX, sizeZ) * 4;
-    const voidTexture = createGridTexture(theme.color, 'void');
-    voidTexture.repeat.set(span / 8, span / 8);
+
+    // Repetición a la mitad de lo que había (`span / 8` daba hasta 18×18 sobre un
+    // plano de 144 unidades). Vista en picado, esa densidad producía un moiré que
+    // reptaba al mover la cámara y que se notaba más cuanto mayor era la resolución
+    // de render, es decir justo en los presets altos.
+    const tiling = span / 16;
+    const voidTexture = createGridTexture(theme.color, 'void', { x: tiling, y: tiling });
 
     const geometry = new THREE.PlaneGeometry(span, span);
     geometry.rotateX(-Math.PI / 2);
@@ -170,20 +186,22 @@ export class DungeonGenerator {
    * empotrada y el muro recupera su volumen.
    */
   buildWall(x, z, width, depth, wallMat, trimMat) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(width, WALL_HEIGHT, depth), wallMat);
+    const wall = new THREE.Mesh(UNIT_BOX, wallMat);
+    wall.scale.set(width, WALL_HEIGHT, depth);
     wall.position.set(x, WALL_HEIGHT / 2, z);
     wall.castShadow = true;
     wall.receiveShadow = true;
     this.group.add(wall);
 
     const inset = 0.28;
-    const trim = new THREE.Mesh(
-      new THREE.BoxGeometry(Math.max(0.12, width - inset), 0.12, Math.max(0.12, depth - inset)),
-      trimMat
-    );
+    const trim = new THREE.Mesh(UNIT_BOX, trimMat);
+    trim.scale.set(Math.max(0.12, width - inset), 0.12, Math.max(0.12, depth - inset));
     trim.position.set(x, WALL_HEIGHT + 0.02, z);
     this.group.add(trim);
 
+    // `setFromObject` necesita la matriz al día, y estas mallas se acaban de crear
+    // y escalar sin que haya pasado ningún render que la recalcule.
+    wall.updateMatrixWorld(true);
     this.obstacleBoxes.push(new THREE.Box3().setFromObject(wall));
   }
 }

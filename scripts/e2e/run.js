@@ -27,7 +27,7 @@ if (!findChrome()) {
 if (!(await apiIsUp())) {
   console.error(
     `La API de cuentas no responde en ${API_URL}. Arranca realtyba-api ` +
-      '(con TRIADVAULTS_DEV_ECHO_PIN=true) y comprueba API_URL.'
+      '(con TRIADVAULTS_DEV_ECHO_PIN=true) y comprueba TRIADVAULTS_API_URL en el .env.'
   );
   process.exit(1);
 }

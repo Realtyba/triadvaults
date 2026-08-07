@@ -100,6 +100,23 @@ export class NavGrid {
     return this.reachable[this.index(col, row)] === 1;
   }
 
+  /**
+   * Todas las celdas de la rejilla, ocupadas o no.
+   *
+   * Lo usa el sorteo de aparición y salidas, que corre **antes** de levantar los
+   * muros: en ese momento no hay nada bloqueado ni alcanzabilidad calculada
+   * todavía, así que `listReachableCells` devolvería una lista vacía.
+   */
+  listAllCells() {
+    const cells = [];
+    for (let row = 0; row < this.rows; row++) {
+      for (let col = 0; col < this.cols; col++) {
+        cells.push({ col, row });
+      }
+    }
+    return cells;
+  }
+
   /** Todas las celdas libres y alcanzables, como pares {col, row}. */
   listReachableCells() {
     const cells = [];

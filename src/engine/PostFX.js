@@ -6,6 +6,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { quality } from './QualitySettings.js';
+import { clamp01 } from '../utils/math.js';
 
 /**
  * Acabado de imagen: viñeta, aberración cromática, grano y un tinte de escena.
@@ -123,23 +124,34 @@ export class PostFX {
 
     // El neón de placas, molduras y cabezas es material emisivo: el bloom es lo
     // que lo convierte en luz en vez de en color plano.
+    // El umbral viaja en el preset, no fijo en el código.
+    //
+    // Estaba clavado en 0.62 mientras la intensidad subía hasta 0.95 y las luces de
+    // esquina pasaban de 4 a 6. La rejilla del suelo es un `emissiveMap`, así que
+    // con esa combinación cruzaba el umbral y dejaba de leerse como textura: se
+    // fundía en un resplandor uniforme. Es exactamente el "se ve raro en ultra".
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(size.x, size.y),
       quality.get('bloomStrength'),
       0.5, // radio
-      0.62 // umbral: solo lo que ya brilla, no toda la escena
+      quality.get('bloomThreshold')
     );
     composer.addPass(this.bloomPass);
 
     this.gradePass = new ShaderPass(GradeShader);
     composer.addPass(this.gradePass);
 
+    // Convierte el espacio lineal al del display. Todo lo que juzgue la imagen por
+    // su luminosidad tiene que ir DESPUÉS.
+    composer.addPass(new OutputPass());
+
+    // SMAA detecta bordes por luminancia, así que necesita la imagen ya convertida
+    // al espacio del display. Colocado antes de `OutputPass` —como estaba— trabajaba
+    // sobre datos lineales en coma flotante y sus umbrales quedaban descalibrados
+    // justo en los bordes de neón, que son los que se miran.
     if (quality.get('smaa')) {
       composer.addPass(new SMAAPass(size.x, size.y));
     }
-
-    // Convierte el espacio lineal al del display. Debe ir siempre el último.
-    composer.addPass(new OutputPass());
 
     this.composer = composer;
   }
@@ -150,17 +162,38 @@ export class PostFX {
     this.gradePass.uniforms.uTint.value.setHex(colorHex);
   }
 
+  /**
+   * Cierra la imagen según lo cerca que esté la amenaza.
+   *
+   * `uVignette` y `uAberration` ya existían en el shader y se fijaban una vez para
+   * no volver a tocarse nunca. Animarlos es, con diferencia, lo que más miedo da por
+   * lo poco que cuesta: la viñeta estrecha el campo visual —el efecto de túnel de
+   * cuando algo te va a alcanzar— y la aberración descompone los bordes.
+   *
+   * @param {number} amount de 0 (lejos) a 1 (encima)
+   */
+  setDread(amount = 0) {
+    if (!this.gradePass) return;
+
+    const dread = quality.get('dreadPostFX') ? clamp01(amount) : 0;
+    this.gradePass.uniforms.uVignette.value = 0.6 + dread * 1.0;
+    this.gradePass.uniforms.uAberration.value = 1.0 + dread * 3.0;
+  }
+
   /** Destello de pantalla; decae solo. `intensity` de 0 a 1. */
   triggerFlash(intensity = 1, colorHex = 0xff0033) {
-    this.flash = Math.min(1, this.flash + intensity);
+    this.flash = clamp01(this.flash + intensity);
     if (this.gradePass) this.gradePass.uniforms.uFlashColor.value.setHex(colorHex);
   }
 
   setSize(width, height) {
     if (!this.composer) return;
+    // `setSize` ya propaga el tamaño a cada pase, incluido el bloom, y en píxeles
+    // de dispositivo. Reescribir después `bloomPass.resolution` con píxeles CSS lo
+    // desincronizaba del tamaño real de sus render targets, y por el doble justo
+    // en los presets con más ratio de píxel.
     this.composer.setSize(width, height);
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
-    if (this.bloomPass) this.bloomPass.resolution.set(width, height);
   }
 
   /**
@@ -187,6 +220,14 @@ export class PostFX {
       this.composer.passes.forEach(pass => pass.dispose && pass.dispose());
       this.composer.renderTarget1.dispose();
       this.composer.renderTarget2.dispose();
+
+      // `copyPass` no está en `passes`: lo crea el propio EffectComposer para sus
+      // volcados internos. Como `build()` se rehace en cada cambio de calidad, sin
+      // esto cada vuelta por el selector de opciones dejaba atrás un material de
+      // pantalla completa.
+      if (this.composer.copyPass && this.composer.copyPass.dispose) {
+        this.composer.copyPass.dispose();
+      }
     }
     this.composer = null;
     this.gradePass = null;

@@ -6,11 +6,25 @@ import { EVENTS } from '../../shared/events.js';
  * Antes se registraban dentro de `showLobby()`, que se llamaba en cada entrada a
  * sala: los handlers se acumulaban y un mismo evento se procesaba N veces.
  */
+/** Pausa entre la pantalla de victoria y el nivel siguiente. */
+const NEXT_LEVEL_DELAY_MS = 2000;
+
+/** Forma canónica del arranque de nivel; se construía a mano en ocho sitios. */
+function levelPayload({ level, seed, seedOffset, players, playersCount }) {
+  return {
+    level,
+    seed,
+    seedOffset,
+    playersCount: playersCount !== undefined ? playersCount : players ? players.length : undefined
+  };
+}
+
 export class NetworkBridge {
   constructor({ socket, game, ui }) {
     this.socket = socket;
     this.game = game;
     this.ui = ui;
+    this.nextLevelTimer = null;
   }
 
   register() {
@@ -45,23 +59,20 @@ export class NetworkBridge {
       this.ui.onReconnectedToRoom(room);
       if (room.inGame) {
         // Se reconstruye con la semilla de la sala: la mazmorra vuelve idéntica.
-        this.game.startLevel({
-          level: room.currentLevel,
-          seed: room.seed,
-          seedOffset: room.seedOffset,
-          playersCount: room.players.length
-        });
+        this.game.startLevel(
+          levelPayload({
+            level: room.currentLevel,
+            seed: room.seed,
+            seedOffset: room.seedOffset,
+            playersCount: room.players.length
+          })
+        );
       }
     });
 
     this.socket.on(EVENTS.GAME_STARTED, ({ level, seed, seedOffset, players }) => {
       this.ui.onGameStarted();
-      this.game.startLevel({
-        level,
-        seed,
-        seedOffset,
-        playersCount: players ? players.length : undefined
-      });
+      this.game.startLevel(levelPayload({ level, seed, seedOffset, players }));
     });
   }
 
@@ -70,8 +81,8 @@ export class NetworkBridge {
       this.game.applyRemoteTransform(uid, position, rotationY);
     });
 
-    this.socket.on(EVENTS.GHOST_SYNCED, ({ position, targetUid }) => {
-      this.game.applyGhostState(position, targetUid);
+    this.socket.on(EVENTS.GHOST_SYNCED, ({ ghosts }) => {
+      this.game.applyGhostStates(ghosts);
     });
 
     this.socket.on(EVENTS.PLAYER_HEALTH_CHANGED, ({ uid, health, alive }) => {
@@ -84,7 +95,17 @@ export class NetworkBridge {
 
     this.socket.on(EVENTS.LOAD_NEXT_LEVEL, ({ level, seed, seedOffset, playersCount }) => {
       this.ui.showVictory();
-      setTimeout(() => this.game.startLevel({ level, seed, seedOffset, playersCount }), 2000);
+
+      // La espera se cancela si el jugador abandona mientras corre. Sin esto, salir
+      // de la sala durante la pantalla de victoria montaba dos segundos después el
+      // nivel siguiente encima del menú principal. El camino sin conexión ya se
+      // protegía; este no.
+      clearTimeout(this.nextLevelTimer);
+      this.nextLevelTimer = setTimeout(() => {
+        this.nextLevelTimer = null;
+        if (!this.socket.currentRoom) return;
+        this.game.startLevel(levelPayload({ level, seed, seedOffset, playersCount }));
+      }, NEXT_LEVEL_DELAY_MS);
     });
 
     this.socket.on(EVENTS.LEVEL_REGENERATED, ({ level, seed, seedOffset }) => {

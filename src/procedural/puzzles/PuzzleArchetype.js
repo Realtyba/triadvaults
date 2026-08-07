@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { PuzzleElement } from '../../entities/PuzzleElement.js';
+import { disposeObject3D } from '../../engine/disposal.js';
+import { PALETTE } from '../../engine/materials.js';
+import { clampPlayers } from '../../../shared/constants.js';
 
 /**
  * Base común de los arquetipos de puzle.
@@ -21,7 +24,7 @@ import { PuzzleElement } from '../../entities/PuzzleElement.js';
 export class PuzzleArchetype {
   /** Nodos que el trazado debe reservar. Lo consulta `LevelController` antes de generar. */
   static nodeCount(playersCount) {
-    return Math.max(1, Math.min(playersCount, 3));
+    return clampPlayers(playersCount);
   }
 
   /** ¿Tiene sentido este arquetipo con este número de agentes? */
@@ -33,8 +36,9 @@ export class PuzzleArchetype {
     this.scene = scene;
     this.nodes = [];
     this.beacons = [];
-    this.exitDoor = null;
-    this.exitBeacon = null;
+    /** @type {import('../../entities/PuzzleElement.js').PuzzleElement[]} */
+    this.exitDoors = [];
+    this.exitBeacons = [];
     this.playersCount = 1;
     this.solved = false;
     this.elapsed = 0;
@@ -54,10 +58,10 @@ export class PuzzleArchetype {
 
   generate(info, playersCount = 1) {
     this.clear();
-    this.playersCount = Math.max(1, Math.min(playersCount, 3));
+    this.playersCount = clampPlayers(playersCount);
     this.theme = info.theme;
 
-    this.buildExit(info.exitPos);
+    this.buildExits(info.exitPositions || [info.exitPos]);
     this.build(info);
     return { requiredCount: this.requiredPlateCount, exitPos: info.exitPos };
   }
@@ -67,14 +71,27 @@ export class PuzzleArchetype {
     throw new Error('Cada arquetipo debe implementar build()');
   }
 
-  buildExit(exitPos) {
-    this.exitDoor = new PuzzleElement('door', exitPos.x, exitPos.z);
-    this.exitDoor.mesh.visible = false;
-    this.scene.add(this.exitDoor.mesh);
+  /**
+   * Monta todas las compuertas del nivel.
+   *
+   * Cualquiera vale para superarlo: son salidas alternativas, no una secuencia. El
+   * interés está en que el grupo tenga que decidir a cuál corre cuando el puzle
+   * cede, con el fantasma —o los fantasmas— ya encima.
+   */
+  buildExits(positions = []) {
+    positions.forEach(exitPos => {
+      const door = new PuzzleElement('door', exitPos.x, exitPos.z);
+      door.mesh.visible = false;
+      this.scene.add(door.mesh);
+      this.exitDoors.push(door);
 
-    const beacon = this.buildBeacon(exitPos.x, exitPos.z, 0xff0055, { height: 8, radius: 0.4 });
-    beacon.visible = false;
-    this.exitBeacon = beacon;
+      const beacon = this.buildBeacon(exitPos.x, exitPos.z, PALETTE.DOOR_LOCKED, {
+        height: 8,
+        radius: 0.4
+      });
+      beacon.visible = false;
+      this.exitBeacons.push(beacon);
+    });
   }
 
   /**
@@ -132,11 +149,11 @@ export class PuzzleArchetype {
 
   openExit() {
     this.solved = true;
-    if (this.exitDoor) {
-      this.exitDoor.mesh.visible = true;
-      this.exitDoor.setActive(true);
-    }
-    if (this.exitBeacon) this.exitBeacon.visible = true;
+    this.exitDoors.forEach(door => {
+      door.mesh.visible = true;
+      door.setActive(true);
+    });
+    this.exitBeacons.forEach(beacon => { beacon.visible = true; });
   }
 
   // ------------------------------------------------------------ consultas
@@ -152,29 +169,43 @@ export class PuzzleArchetype {
     return node ? node.mesh.position : null;
   }
 
+  /** La primera compuerta. Para todas, `exitPositions`. */
+  get exitDoor() {
+    return this.exitDoors[0] || null;
+  }
+
   get exitPosition() {
     return this.exitDoor ? this.exitDoor.mesh.position : null;
   }
 
+  get exitPositions() {
+    return this.exitDoors.map(door => door.mesh.position);
+  }
+
+  /** Vale cualquiera de las salidas abiertas. */
   isAtExit(position) {
-    return !!this.exitDoor && this.solved && this.exitDoor.checkCollision(position);
+    if (!this.solved) return false;
+    return this.exitDoors.some(door => door.checkCollision(position));
   }
 
   // -------------------------------------------------------------- limpieza
 
+  /**
+   * Libera todo lo que montó este arquetipo.
+   *
+   * Antes solo las balizas se disponían: los nodos y la puerta se sacaban de la
+   * escena y sus geometrías y materiales se quedaban en la GPU para siempre. Es la
+   * razón por la que `renderer.info.memory` subía nivel tras nivel sin bajar nunca.
+   */
   clear() {
-    this.nodes.forEach(node => this.scene.remove(node.mesh));
-    this.beacons.forEach(beacon => {
-      this.scene.remove(beacon);
-      if (beacon.geometry) beacon.geometry.dispose();
-      if (beacon.material) beacon.material.dispose();
-    });
-    if (this.exitDoor) this.scene.remove(this.exitDoor.mesh);
+    this.nodes.forEach(node => node.dispose(this.scene));
+    this.beacons.forEach(beacon => disposeObject3D(beacon, this.scene));
+    this.exitDoors.forEach(door => door.dispose(this.scene));
 
     this.nodes = [];
     this.beacons = [];
-    this.exitDoor = null;
-    this.exitBeacon = null;
+    this.exitDoors = [];
+    this.exitBeacons = [];
     this.solved = false;
     this.elapsed = 0;
   }

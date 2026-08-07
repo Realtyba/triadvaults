@@ -1,3 +1,5 @@
+import { CODE_LENGTH } from '../../../shared/constants.js';
+
 /** Crear, unirse, abandonar y arrancar salas. */
 export class RoomController {
   constructor({ socket, store, form, t, ui }) {
@@ -8,20 +10,25 @@ export class RoomController {
     this.ui = ui;
   }
 
+  /** Mensaje de error del servidor, o el genérico de la clave i18n indicada. */
+  errorFrom(res, fallbackKey) {
+    return (res && res.error) || this.t(fallbackKey);
+  }
+
   create() {
     if (!this.checkVerification()) return;
 
     this.socket.createRoom(res => {
       if (res && res.success) this.enterLobby(res.room);
-      else this.ui.alert((res && res.error) || this.t('error_create_room'));
+      else this.ui.alert(this.errorFrom(res, 'error_create_room'));
     });
   }
 
   joinByCode() {
-    if (!this.checkVerification()) return;
-
+    // La verificación la comprueba `join`, que es donde acaba este camino: hacerlo
+    // aquí también abría dos veces el mismo modal.
     const code = this.form.get('roomCode').trim().toUpperCase();
-    if (code.length !== 4) return this.ui.alert(this.t('error_invalid_room_code'));
+    if (code.length !== CODE_LENGTH) return this.ui.alert(this.t('error_invalid_room_code'));
     this.join(code);
   }
 
@@ -30,7 +37,7 @@ export class RoomController {
 
     this.socket.joinRoom(code, res => {
       if (!res || !res.success) {
-        return this.ui.alert((res && res.error) || this.t('error_join_room'));
+        return this.ui.alert(this.errorFrom(res, 'error_join_room'));
       }
 
       this.form.clear('roomCode');

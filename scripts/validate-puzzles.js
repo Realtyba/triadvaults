@@ -45,7 +45,8 @@ function build(Type, playersCount, level = 20, seed = 7919) {
     seedOffset: 0,
     plates: layout.plates,
     theme: layout.theme,
-    exitPos: new THREE.Vector3(layout.exit.x, 0, layout.exit.z)
+    exitPos: new THREE.Vector3(layout.exit.x, 0, layout.exit.z),
+    exitPositions: layout.exits.map(exit => new THREE.Vector3(exit.x, 0, exit.z))
   };
 
   const puzzle = new Type(scene);

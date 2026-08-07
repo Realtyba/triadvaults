@@ -1,22 +1,42 @@
+import { clamp01, falloff } from '../../utils/math.js';
+
 /**
  * Elige a quién persigue el fantasma.
  *
- * El comportamiento anterior era "el más cercano, recalculado cada frame": con dos
- * agentes eso se traduce en perseguir siempre al mismo (el host, que suele estar más
- * cerca al arrancar) y en oscilar cuando empatan. Aquí se puntúa la amenaza y se
- * añade histéresis para que el cambio de objetivo sea intencionado y legible.
+ * ## Por qué no cambiaba de objetivo
+ *
+ * La lógica se reevaluaba cada fotograma; el problema no era ese, sino la **escala
+ * de la puntuación**:
+ *
+ * 1. `maxDistance` valía 60 por defecto y nadie pasaba nunca otro valor, mientras
+ *    que la sala más grande mide 36×36. Con ese divisor, dos agentes separados
+ *    nueve unidades se diferenciaban en 9/60 = 0,15 de proximidad, que era
+ *    **exactamente** el margen exigido para cambiar. Es decir: en las distancias en
+ *    las que se juega de verdad, el cambio era imposible por construcción.
+ * 2. `onPlate` sumaba un fijo de 0,7 cuando el recorrido realista de la proximidad
+ *    ronda 0,2. Quien pisaba un nodo quedaba marcado y, por el punto anterior, el
+ *    fantasma no podía soltarlo. En `RelayCircuit`, donde el portador del ancla
+ *    debe quedarse quieto, eso era un bloqueo permanente.
+ * 3. La única vía de escape era la fatiga a los 12 s, que se leía como "el fantasma
+ *    me ignora doce segundos".
+ *
+ * Ahora el rango llega desde fuera —la diagonal real de la sala— y el margen, el
+ * bloqueo mínimo y el peso del nodo están calibrados contra ese recorrido.
  */
 
 const WEIGHTS = {
   proximity: 1.0, // lo cercano pesa, pero no lo decide todo
   lowHealth: 0.45, // rematar a quien ya está tocado
-  onPlate: 0.7, // desalojar a quien está resolviendo el puzle
+  onPlate: 0.35, // desalojar a quien resuelve, sin que eclipse a la distancia
   fatigue: 0.5 // penaliza insistir con el mismo objetivo demasiado tiempo
 };
 
-const SWITCH_MARGIN = 0.15; // el rival debe superar al actual por este margen
-const MIN_LOCK_SECONDS = 2.5; // tiempo mínimo antes de plantearse un cambio
-const MAX_CHASE_SECONDS = 12; // a partir de aquí la fatiga fuerza el relevo
+const SWITCH_MARGIN = 0.08; // el rival debe superar al actual por este margen
+const MIN_LOCK_SECONDS = 1.2; // tiempo mínimo antes de plantearse un cambio
+const MAX_CHASE_SECONDS = 6; // a partir de aquí la fatiga fuerza el relevo
+
+/** Diagonal por defecto, si nadie informa del tamaño de la sala. */
+const DEFAULT_RANGE = 45;
 
 export class TargetSelector {
   constructor(options = {}) {
@@ -30,19 +50,19 @@ export class TargetSelector {
     this.baseWeights = { ...this.weights };
     this.baseMinLock = this.minLockSeconds;
     this.baseSwitchMargin = this.switchMargin;
+
+    /** Resultado reutilizado: `update` corre por fantasma y fotograma. */
+    this.result = { player: null, distance: 0 };
   }
 
   /**
    * Sube la presión sin tocar la velocidad. La usa `GhostEnemy` en los niveles
    * altos, cuando el fantasma ya ha llegado a su tope de velocidad.
    *
-   * Con la agresividad al máximo reacciona en la mitad de tiempo y prioriza mucho
-   * más a quien está sobre un nodo: el puzle deja de poder resolverse ignorándolo.
-   *
    * @param {number} amount de 0 (base) a 1 (máxima)
    */
   setAggression(amount = 0) {
-    const level = Math.max(0, Math.min(1, amount));
+    const level = clamp01(amount);
 
     this.weights = {
       ...this.baseWeights,
@@ -60,44 +80,69 @@ export class TargetSelector {
 
   /**
    * @param {Array<{uid, position, health, alive, onPlate}>} players
-   * @param {THREE.Vector3} ghostPosition
+   * @param {import('three').Vector3} ghostPosition
    * @param {number} delta
-   * @returns {object|null} el jugador elegido
+   * @param {number} maxDistance diagonal de la sala; ver la nota de cabecera
+   * @returns {{player: object, distance: number}|null} búfer reutilizado
    */
-  update(players, ghostPosition, delta, maxDistance = 60) {
-    const candidates = players.filter(p => p.alive !== false && p.health > 0);
-    if (candidates.length === 0) {
+  update(players, ghostPosition, delta, maxDistance = DEFAULT_RANGE) {
+    this.chaseTime += delta;
+
+    let best = null;
+    let bestScore = -Infinity;
+    let current = null;
+    let currentScore = -Infinity;
+    let bestDistance = 0;
+    let currentDistance = 0;
+
+    // Un solo recorrido, sin map/sort/find: esto corre por fantasma y fotograma, y
+    // con un fantasma por agente se multiplica.
+    for (const player of players) {
+      if (player.alive === false || player.health <= 0) continue;
+
+      const distance = ghostPosition.distanceTo(player.position);
+      const score = this.score(player, distance, maxDistance);
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = player;
+        bestDistance = distance;
+      }
+      if (player.uid === this.targetUid) {
+        currentScore = score;
+        current = player;
+        currentDistance = distance;
+      }
+    }
+
+    if (!best) {
       this.reset();
       return null;
     }
 
-    this.chaseTime += delta;
-
-    const scored = candidates.map(player => ({
-      player,
-      score: this.score(player, ghostPosition, maxDistance)
-    }));
-    scored.sort((a, b) => b.score - a.score);
-
-    const current = scored.find(s => s.player.uid === this.targetUid);
-    const best = scored[0];
-
     // Sin objetivo, o el actual ya no está disponible: se toma el mejor sin más.
     if (!current) {
-      this.setTarget(best.player.uid);
-      return best.player;
+      this.setTarget(best.uid);
+      return this.emit(best, bestDistance);
     }
 
     const fatigued = this.chaseTime >= this.maxChaseSeconds;
     const canSwitch = this.chaseTime >= this.minLockSeconds;
-    const clearlyBetter = best.score > current.score + this.switchMargin;
+    const clearlyBetter = bestScore > currentScore + this.switchMargin;
 
-    if (best.player.uid !== current.player.uid && canSwitch && (clearlyBetter || fatigued)) {
-      this.setTarget(best.player.uid);
-      return best.player;
+    if (best.uid !== current.uid && canSwitch && (clearlyBetter || fatigued)) {
+      this.setTarget(best.uid);
+      return this.emit(best, bestDistance);
     }
 
-    return current.player;
+    return this.emit(current, currentDistance);
+  }
+
+  /** La distancia ya está calculada: devolverla evita que el llamante la repita. */
+  emit(player, distance) {
+    this.result.player = player;
+    this.result.distance = distance;
+    return this.result;
   }
 
   setTarget(uid) {
@@ -105,14 +150,12 @@ export class TargetSelector {
     this.targetUid = uid;
   }
 
-  score(player, ghostPosition, maxDistance) {
-    const distance = ghostPosition.distanceTo(player.position);
-    const proximity = 1 - Math.min(1, distance / maxDistance);
-    const lowHealth = 1 - Math.max(0, Math.min(1, (player.health ?? 100) / 100));
+  score(player, distance, maxDistance) {
+    const proximity = falloff(distance, maxDistance);
+    const lowHealth = 1 - clamp01((player.health ?? 100) / 100);
     const onPlate = player.onPlate ? 1 : 0;
-    const fatigue = player.uid === this.targetUid
-      ? Math.min(1, this.chaseTime / this.maxChaseSeconds)
-      : 0;
+    const fatigue =
+      player.uid === this.targetUid ? clamp01(this.chaseTime / this.maxChaseSeconds) : 0;
 
     return (
       proximity * this.weights.proximity +

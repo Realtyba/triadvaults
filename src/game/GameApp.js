@@ -12,6 +12,9 @@ import { LevelController } from './LevelController.js';
 import { PlayerRegistry } from './PlayerRegistry.js';
 import { NetworkBridge } from './NetworkBridge.js';
 import { GHOST_DAMAGE } from '../../shared/events.js';
+import { falloff } from '../utils/math.js';
+import { quality } from '../engine/QualitySettings.js';
+import { PALETTE } from '../engine/materials.js';
 
 const MOVE_SEND_HZ = 20;
 const GHOST_SEND_HZ = 15;
@@ -75,7 +78,10 @@ export class GameApp {
     // escena, luces y partículas.
     this.ambient.stop();
 
-    this.level.build({ level, seed, seedOffset, playersCount: count });
+    // Cada agente lleva su propio cazador asignado; el orden sale de la sala, que
+    // es igual en todos los clientes, así que la asignación coincide para todos.
+    const owners = room ? room.players.map(p => ({ uid: String(p.uid) })) : [];
+    this.level.build({ level, seed, seedOffset, playersCount: count, owners });
     this.deathCount = 0;
     // El daño del nivel lo lleva el servidor cuando hay sala; sin ella no hay quien
     // lo cuente, y los logros de "sin recibir un golpe" necesitan saberlo.
@@ -197,6 +203,10 @@ export class GameApp {
   syncRoomPlayers(room) {
     if (!room || !this.running) return;
     this.players.sync(room.players, this.socket.uid, index => this.level.spawnFor(index));
+
+    // Entra o sale alguien a mitad de partida: se reparten los cazadores otra vez,
+    // o el recién llegado se quedaría sin perseguidor y sobraría uno huérfano.
+    this.level.syncGhostOwners(room.players.map(p => ({ uid: String(p.uid) })));
   }
 
   applyRemoteTransform(uid, position, rotationY) {
@@ -204,10 +214,30 @@ export class GameApp {
     if (entity && !entity.isLocal) entity.setNetworkTransform(position, rotationY);
   }
 
-  applyGhostState(position, targetUid) {
-    if (!this.level.ghost || this.isHost) return;
-    this.level.ghost.setPosition(position);
-    this.level.ghost.setTargetIndicator(targetUid, this.players.snapshot());
+  /**
+   * Estado de todos los fantasmas, tal como lo manda el host.
+   *
+   * Llega un lote por paquete en vez de un evento por fantasma: son quince envíos
+   * por segundo y multiplicarlos por tres no aportaba nada.
+   */
+  applyGhostStates(ghosts = []) {
+    if (this.isHost || this.level.ghosts.length === 0) return;
+
+    // La instantánea solo hace falta si algún fantasma ha cambiado de presa: es un
+    // recorrido de todos los agentes y antes se hacía en cada paquete solo para
+    // repintar un color que casi nunca cambia.
+    let snapshot = null;
+
+    ghosts.forEach(state => {
+      const ghost = this.level.ghosts[state.id];
+      if (!ghost) return;
+
+      ghost.setPosition(state.position);
+      if (ghost.targetUid !== state.targetUid) {
+        if (!snapshot) snapshot = this.players.snapshot();
+        ghost.setTargetIndicator(state.targetUid, snapshot);
+      }
+    });
   }
 
   // ------------------------------------------------------------- el bucle
@@ -265,8 +295,8 @@ export class GameApp {
     this.players.updateRemotes(delta);
     this.players.list().forEach(entity => entity.updateShieldVisual());
 
-    const snapshot = this.players.snapshot(pos => this.level.isPlayerOnPlate(pos));
-    this.updateGhost(delta, snapshot);
+    const snapshot = this.players.snapshot(this.isOnPlateBound || (this.isOnPlateBound = pos => this.level.isPlayerOnPlate(pos)));
+    this.updateGhosts(delta, snapshot);
     this.updatePuzzle(snapshot, local, delta);
     this.updateTension(delta, local);
     this.throttledHudUpdate(delta);
@@ -287,6 +317,9 @@ export class GameApp {
   /** Distancia a la que el fantasma empieza a notarse en la música. */
   static TENSION_RANGE = 18;
 
+  /** A partir de aquí, además, la cámara empieza a temblar. */
+  static DREAD_SHAKE_RANGE = 4;
+
   /**
    * Traduce la cercanía del fantasma en tensión sonora.
    *
@@ -295,16 +328,50 @@ export class GameApp {
    * se oye, solo gasta.
    */
   updateTension(delta, local) {
+    // La sacudida por cercanía sí va por fotograma: a 5 Hz se sentiría como tirones.
+    this.updateProximityShake(delta, local);
+
     this.tensionAccumulator = (this.tensionAccumulator || 0) + delta;
     if (this.tensionAccumulator < 0.2) return;
     this.tensionAccumulator = 0;
 
-    const ghost = this.level.ghost;
-    if (!ghost || !local || !local.alive) return this.sound.setTension(0);
+    if (!local || !local.alive) {
+      this.sound.setTension(0);
+      this.sound.setHeartbeat(0);
+      this.renderer.setDread(0);
+      return;
+    }
 
-    const distance = ghost.mesh.position.distanceTo(local.getPosition());
-    const proximity = 1 - Math.min(1, distance / GameApp.TENSION_RANGE);
-    this.sound.setTension(proximity * proximity); // al cuadrado: solo aprieta de cerca
+    const distance = this.nearestGhostDistance(local.getPosition());
+    const proximity = falloff(distance, GameApp.TENSION_RANGE);
+    const tension = proximity * proximity; // al cuadrado: solo aprieta de cerca
+
+    this.sound.setTension(tension);
+    // El latido acompaña a la música en vez de sustituirla: es la señal que se
+    // percibe antes de llegar a ver de dónde viene la amenaza.
+    this.sound.setHeartbeat(proximity);
+    this.renderer.setDread(tension);
+  }
+
+  /** Distancia al fantasma más cercano. Con varios, manda el que más aprieta. */
+  nearestGhostDistance(position) {
+    let nearest = Infinity;
+    for (const ghost of this.level.ghosts) {
+      const distance = ghost.mesh.position.distanceTo(position);
+      if (distance < nearest) nearest = distance;
+    }
+    return nearest;
+  }
+
+  /** A bocajarro la cámara tiembla. Antes solo temblaba al recibir un golpe. */
+  updateProximityShake(delta, local) {
+    if (!local || !local.alive || this.level.ghosts.length === 0) return;
+
+    const distance = this.nearestGhostDistance(local.getPosition());
+    if (distance > GameApp.DREAD_SHAKE_RANGE) return;
+
+    const closeness = falloff(distance, GameApp.DREAD_SHAKE_RANGE);
+    this.camera.addShake(closeness * closeness * delta * 0.6);
   }
 
   throttledSendMove(delta, local) {
@@ -316,19 +383,64 @@ export class GameApp {
     this.socket.sendMove({ x: pos.x, y: pos.y, z: pos.z }, local.mesh.rotation.y);
   }
 
-  updateGhost(delta, snapshot) {
-    const ghost = this.level.ghost;
-    if (!ghost || !this.isHost) return;
+  updateGhosts(delta, snapshot) {
+    const ghosts = this.level.ghosts;
+    if (ghosts.length === 0) return;
 
-    const targetUid = ghost.update(delta, snapshot, this.level.obstacleBoxes, uid =>
-      this.onGhostHit(uid)
-    );
+    // Los clientes que no son el host solo interpolan lo que reciben, pero la
+    // estela es cosmética y se genera en local: si solo la emitiese el host, el
+    // fantasma se vería distinto según en qué pantalla lo mirases.
+    if (!this.isHost) {
+      ghosts.forEach(ghost => {
+        ghost.updateRemote(delta);
+        // Su presa la sabemos por el paquete, así que la luz puede latir aquí
+        // igual que en la máquina del host en vez de quedarse en reposo.
+        const prey = ghost.targetUid ? snapshot.find(p => p.uid === ghost.targetUid) : null;
+        ghost.distanceToTarget = prey ? ghost.mesh.position.distanceTo(prey.position) : Infinity;
+        this.emitGhostTrail(ghost, delta);
+      });
+      return;
+    }
+
+    const range = this.level.roomRange;
+    const onHit = this.onGhostHitBound || (this.onGhostHitBound = uid => this.onGhostHit(uid));
+
+    for (const ghost of ghosts) {
+      const previous = ghost.targetUid;
+      const targetUid = ghost.update(delta, snapshot, onHit, range);
+
+      // Solo cuando el objetivo pasa a ser el jugador de esta pantalla: un aviso
+      // que sonara con cada cambio ajeno dejaría de significar nada.
+      if (targetUid !== previous && targetUid && targetUid === this.socket.uid) {
+        this.sound.playTargetLocked();
+        this.renderer.flash(0.25, PALETTE.DANGER);
+      }
+
+      this.emitGhostTrail(ghost, delta);
+    }
 
     this.ghostAccumulator += delta;
     if (this.ghostAccumulator >= 1 / GHOST_SEND_HZ) {
       this.ghostAccumulator = 0;
-      this.socket.sendGhostState(ghost.mesh.position, targetUid);
+      this.socket.sendGhostStates(ghosts);
     }
+  }
+
+  /**
+   * Rastro de partículas.
+   *
+   * Reutiliza el pool de impactos con ráfagas mínimas y color casi negro: no es un
+   * efecto nuevo, es el mismo sistema emitiendo poco y a menudo. Deja un reguero
+   * que indica por dónde ha pasado algo aunque ya no lo tengas a la vista.
+   */
+  emitGhostTrail(ghost, delta) {
+    if (!quality.get('ghostTrail')) return;
+
+    ghost.trailAccumulator = (ghost.trailAccumulator || 0) + delta;
+    if (ghost.trailAccumulator < 0.15) return;
+    ghost.trailAccumulator = 0;
+
+    this.particles.burst(ghost.mesh.position, 0x330011, { spread: 0.6, up: 0.4, count: 2 });
   }
 
   /** El host solo reporta el impacto; la vida resultante la calcula el servidor. */
@@ -361,8 +473,10 @@ export class GameApp {
       // La compuerta abriéndose es el momento que se estaba buscando: se subraya.
       this.camera.addShake(0.35);
       this.renderer.flash(0.5, themeColor);
-      const exit = this.level.puzzle.exitPosition;
-      if (exit) this.particles.burst(exit, themeColor, { spread: 5, up: 5, count: 40 });
+      // Una ráfaga por compuerta: con varias salidas, marcarlas todas es lo que
+      // convierte "ya está" en "¿a cuál corremos?".
+      const exits = this.level.puzzle.exitPositions;
+      exits.forEach(exit => this.particles.burst(exit, themeColor, { spread: 5, up: 5, count: 40 }));
     }
     this.lastPuzzleSolved = result.solved;
 
@@ -374,7 +488,7 @@ export class GameApp {
       // Con sala manda el servidor: él suma el progreso y responde con el siguiente
       // nivel. Sin ella no hay nadie al otro lado, así que la partida se cierra aquí.
       if (this.socket.currentRoom) {
-        this.socket.notifyLevelComplete(this.level.elapsedSeconds);
+        this.socket.notifyLevelComplete(this.level.elapsedSeconds, this.level.level);
         return;
       }
 

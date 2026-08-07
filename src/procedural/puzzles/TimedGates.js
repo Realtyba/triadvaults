@@ -1,7 +1,9 @@
 import { PuzzleArchetype } from './PuzzleArchetype.js';
+import { PALETTE } from '../../engine/materials.js';
+import { falloff } from '../../utils/math.js';
 
-const ACTIVE_COLOR = 0x00ff66;
-const IDLE_COLOR = 0xffa500;
+const ACTIVE_COLOR = PALETTE.PLATE_ACTIVE;
+const IDLE_COLOR = PALETTE.PLATE_IDLE;
 
 /**
  * Compuertas temporizadas: activar todos los nodos antes de que expire el primero.
@@ -76,7 +78,7 @@ export class TimedGates extends PuzzleArchetype {
   paintUrgency(node, remaining) {
     if (remaining <= 0) return;
 
-    const urgency = 1 - Math.min(1, remaining / this.window);
+    const urgency = 1 - falloff(remaining, this.window);
     const blink = urgency > 0.55 ? 0.5 + Math.abs(Math.sin(this.elapsed * 14)) * 0.7 : 1;
 
     node.padMat.emissiveIntensity = blink;

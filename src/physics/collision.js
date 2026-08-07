@@ -1,8 +1,11 @@
 import * as THREE from 'three';
+import { clamp01 } from '../utils/math.js';
 
 /**
- * Colisión y deslizamiento contra muros, compartidos por el jugador y el fantasma.
- * Antes vivía dentro de `PlayerEntity`, que es por lo que el fantasma atravesaba los muros.
+ * Colisión y deslizamiento contra muros.
+ *
+ * Lo usa el jugador. El fantasma **no** colisiona a propósito: atraviesa la
+ * geometría, que es lo que le da su carácter de aparición. Ver `GhostEnemy.js`.
  */
 
 const tmpFull = new THREE.Vector3();
@@ -55,5 +58,5 @@ export function turnTowards(current, target, delta, speed = 14) {
   let diff = target - current;
   while (diff < -Math.PI) diff += Math.PI * 2;
   while (diff > Math.PI) diff -= Math.PI * 2;
-  return current + diff * Math.min(1, delta * speed);
+  return current + diff * clamp01(delta * speed);
 }

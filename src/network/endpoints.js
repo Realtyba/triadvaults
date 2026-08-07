@@ -47,11 +47,12 @@ export function apiBaseUrl() {
 
   if (window.location.protocol === 'file:') return null;
 
-  // En desarrollo, Vite sirve el cliente en :3000 y Laravel escucha en :8000. No
-  // se puede caer a `window.location.origin` como antes, porque ese era el mismo
-  // servidor que servía la API y ahora no lo es.
+  // En desarrollo, Vite sirve el cliente en :3000 y realtyba-api escucha en :8080
+  // (es el puerto que publica su `docker-local/docker-compose.yml`). No se puede
+  // caer a `window.location.origin` como antes, porque ese era el mismo servidor
+  // que servía la API y ahora no lo es.
   const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-  return isLocal ? 'http://localhost:8000' : window.location.origin;
+  return isLocal ? 'http://localhost:8080' : window.location.origin;
 }
 
 /**

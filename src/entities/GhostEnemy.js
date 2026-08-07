@@ -1,22 +1,67 @@
 import * as THREE from 'three';
-import { moveWithSlide } from '../physics/collision.js';
+import { turnTowards } from '../physics/collision.js';
 import { TargetSelector } from './ghost/TargetSelector.js';
 import { PLAYER_COLORS } from './Player.js';
+import { disposeObject3D } from '../engine/disposal.js';
+import { PALETTE } from '../engine/materials.js';
+import { quality } from '../engine/QualitySettings.js';
+import { clamp01, pulse } from '../utils/math.js';
 
-const GHOST_RADIUS = 0.55;
 const ATTACK_RANGE = 1.3;
 const ATTACK_COOLDOWN = 1.0;
 
-/** Si el camino recto está bloqueado, se prueban desvíos a ambos lados. */
-const DETOUR_ANGLES = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, Math.PI * 0.75, -Math.PI * 0.75];
+/** Suavizado del fantasma remoto, igual que el de los agentes. */
+const REMOTE_LERP = 10;
 
+/** Jirones de la mortaja. Más de siete y se lee como una bola, no como tela. */
+const SHROUD_COUNT = 6;
+
+/**
+ * El perseguidor.
+ *
+ * ## Estética
+ *
+ * Antes era un octaedro rojo emisivo con un toro de alambre girando y un foco rojo:
+ * brillante, saturado y perfectamente inofensivo. El problema de fondo es que **lo
+ * que da miedo es una ausencia de luz que se mueve**, no una bombilla. Así que el
+ * cuerpo pasa a ser casi negro, la mortaja lo deshilacha para que no tenga una
+ * silueta sólida que el ojo pueda fijar, y lo único luminoso son los ojos: en una
+ * sala oscura es lo primero que se ve, y mira hacia ti.
+ *
+ * La mortaja se anima con rotación y escala por seno, sin tocar vértices, así que
+ * el coste es el de cualquier otra malla estática.
+ *
+ * ## Autoridad
+ *
+ * Lo simula el cliente que hace de host; los demás solo lo interpolan. El servidor
+ * no lo simula, solo arbitra el daño resultante.
+ *
+ * ## Colisión
+ *
+ * **Atraviesa muros a propósito.** No hay pathfinding, y con él una aparición que
+ * respetase la geometría solo parecería un enemigo con la ruta rota.
+ */
 export class GhostEnemyEntity {
-  constructor(scene) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {{index?: number, ownerUid?: string|null}} options
+   *   `ownerUid` fija la presa asignada; sin él persigue por puntuación.
+   */
+  constructor(scene, { index = 0, ownerUid = null } = {}) {
     this.scene = scene;
+    this.index = index;
+    this.ownerUid = ownerUid;
     this.speed = 2.5;
     this.damageCooldown = 0;
     this.targetSelector = new TargetSelector();
     this.targetUid = null;
+    this.elapsed = 0;
+
+    /** Distancia a su presa en el último fotograma; la usa la capa de tensión. */
+    this.distanceToTarget = Infinity;
+
+    this.remoteTarget = new THREE.Vector3();
+    this.hasRemoteTarget = false;
 
     this.mesh = new THREE.Group();
     this.buildMesh();
@@ -24,27 +69,88 @@ export class GhostEnemyEntity {
   }
 
   buildMesh() {
+    // Cuerpo: casi negro, apenas emisivo. Es un vacío con volumen, no una luz.
     this.coreMat = new THREE.MeshStandardMaterial({
-      color: 0xff0033,
-      emissive: 0xff0022,
-      emissiveIntensity: 1.5,
-      roughness: 0.1,
+      color: 0x0a0208,
+      emissive: 0x330008,
+      emissiveIntensity: 0.45,
+      roughness: 0.95,
+      metalness: 0,
       transparent: true,
-      opacity: 0.85
+      opacity: 0.92
     });
-    this.coreMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.7, 2), this.coreMat);
+    this.coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55, 1), this.coreMat);
     this.coreMesh.position.y = 1.6;
+    // Una sombra que cruza el suelo antes de que veas la criatura.
+    this.coreMesh.castShadow = quality.get('shadows');
     this.mesh.add(this.coreMesh);
 
-    this.ringMat = new THREE.MeshBasicMaterial({ color: 0xff0044, wireframe: true });
-    this.ringMesh = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.08, 16, 32), this.ringMat);
-    this.ringMesh.position.y = 1.6;
-    this.ringMesh.rotation.x = Math.PI / 3;
-    this.mesh.add(this.ringMesh);
+    this.buildShroud();
+    this.buildEyes();
 
-    this.light = new THREE.PointLight(0xff0033, 2.5, 10);
-    this.light.position.set(0, 1.8, 0);
+    // Luz tenue y fría en vez del foco rojo: insinúa la silueta sin revelarla.
+    this.light = new THREE.PointLight(0x330011, 1.4, 8);
+    this.light.position.set(0, 1.7, 0);
+    this.baseLightIntensity = 1.4;
     this.mesh.add(this.light);
+  }
+
+  /**
+   * Jirones que cuelgan del cuerpo.
+   *
+   * Conos abiertos, sin tapa y a doble cara, con la punta hacia arriba: colgando
+   * bajo el núcleo se leen como tela. Sin escritura de profundidad para que se
+   * atraviesen entre sí en vez de recortarse con bordes duros.
+   */
+  buildShroud() {
+    this.shroud = [];
+    if (!quality.get('ghostShroud')) return;
+
+    const geometry = new THREE.ConeGeometry(0.34, 1.7, 5, 1, true);
+    this.shroudMat = new THREE.MeshStandardMaterial({
+      color: 0x120310,
+      emissive: 0x2a0010,
+      emissiveIntensity: 0.3,
+      roughness: 1,
+      transparent: true,
+      opacity: 0.38,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+
+    for (let i = 0; i < SHROUD_COUNT; i++) {
+      const strip = new THREE.Mesh(geometry, this.shroudMat);
+      const angle = (i / SHROUD_COUNT) * Math.PI * 2;
+
+      strip.position.set(Math.cos(angle) * 0.28, 1.1, Math.sin(angle) * 0.28);
+      strip.rotation.z = Math.PI; // punta hacia abajo: cuelga
+      strip.userData.phase = i * 1.7;
+      strip.userData.angle = angle;
+
+      this.mesh.add(strip);
+      this.shroud.push(strip);
+    }
+    this.shroudGeometry = geometry;
+  }
+
+  /**
+   * Lo único brillante de la criatura.
+   *
+   * Por eso son lo que recoge el bloom y lo que se distingue a distancia. Toman el
+   * color del agente perseguido, que es como se conserva la función que antes tenía
+   * el anillo de alambre: saber a por quién va sin mirar el HUD.
+   */
+  buildEyes() {
+    const geometry = new THREE.SphereGeometry(0.075, 8, 8);
+    this.eyeMat = new THREE.MeshBasicMaterial({ color: PALETTE.GHOST_AURA });
+
+    this.eyes = [-1, 1].map(side => {
+      const eye = new THREE.Mesh(geometry, this.eyeMat);
+      eye.position.set(side * 0.19, 1.68, 0.42);
+      this.mesh.add(eye);
+      return eye;
+    });
+    this.eyeGeometry = geometry;
   }
 
   /** La velocidad escala con el nivel sin llegar nunca a la del jugador (8.5). */
@@ -66,35 +172,74 @@ export class GhostEnemyEntity {
     this.speed = 2.5 + ramp * 5.0;
 
     // De 0 en el nivel 15 a 1 en el 40.
-    const pressure = Math.max(0, Math.min(1, (level - 15) / 25));
+    const pressure = clamp01((level - 15) / 25);
     this.targetSelector.setAggression(pressure);
   }
 
   spawnAt(x, z) {
     this.mesh.position.set(x, 0, z);
+    this.remoteTarget.set(x, 0, z);
+    this.hasRemoteTarget = false;
     this.targetSelector.reset();
     this.targetUid = null;
+    this.distanceToTarget = Infinity;
   }
 
+  /** Estado que llega del host. Se interpola en `updateRemote`, no se teletransporta. */
   setPosition(position) {
-    this.mesh.position.set(position.x, position.y, position.z);
+    this.remoteTarget.set(position.x, position.y, position.z);
+    if (!this.hasRemoteTarget) {
+      this.mesh.position.copy(this.remoteTarget);
+      this.hasRemoteTarget = true;
+    }
   }
 
-  /** El aura toma el color del agente perseguido: se ve a quién va sin leer el HUD. */
+  /**
+   * Suavizado en los clientes que no son el host.
+   *
+   * El host manda 15 veces por segundo y antes cada paquete se aplicaba con un
+   * `position.set` seco, así que el fantasma daba saltos mientras los agentes sí
+   * se interpolaban. Con varios fantasmas ese salto se multiplicaba.
+   */
+  updateRemote(delta) {
+    this.elapsed += delta;
+    this.animateIdle(delta);
+    if (!this.hasRemoteTarget) return;
+
+    this.mesh.position.lerp(this.remoteTarget, clamp01(delta * REMOTE_LERP));
+  }
+
+  /** El color de los ojos delata a quién persigue. */
   setTargetIndicator(uid, players) {
     if (this.targetUid === uid) return;
     this.targetUid = uid;
 
     const target = players.find(p => p.uid === uid);
-    const color = target ? PLAYER_COLORS[target.index % PLAYER_COLORS.length] : 0xff0044;
-    this.ringMat.color.setHex(color);
+    const color = target ? PLAYER_COLORS[target.index % PLAYER_COLORS.length] : PALETTE.GHOST_AURA;
+    this.eyeMat.color.setHex(color);
   }
 
   animateIdle(delta) {
-    const time = Date.now() * 0.003;
-    this.coreMesh.position.y = 1.6 + Math.sin(time * 2) * 0.25;
-    this.ringMesh.rotation.z += delta * 1.5;
-    this.ringMesh.rotation.y += delta * 0.8;
+    // Reloj propio acumulado: antes era `Date.now()`, que no se puede pausar y va
+    // por libre respecto al resto de animaciones de la escena.
+    this.coreMesh.position.y = 1.6 + Math.sin(this.elapsed * 2) * 0.18;
+    this.coreMesh.rotation.y += delta * 0.35;
+
+    // La mortaja ondea: cada jirón con su fase, o los seis laten a la vez y se lee
+    // como un objeto rígido que se hincha.
+    this.shroud.forEach(strip => {
+      const wave = pulse(this.elapsed, 1.6, strip.userData.phase);
+      strip.scale.y = 0.85 + wave * 0.35;
+      strip.rotation.x = Math.sin(this.elapsed * 1.1 + strip.userData.phase) * 0.16;
+      strip.position.y = 1.1 + wave * 0.1;
+    });
+
+    // La luz respira, más deprisa cuanto más cerca está de su presa.
+    if (this.light) {
+      const closeness = clamp01(1 - this.distanceToTarget / 14);
+      const beat = pulse(this.elapsed, 2 + closeness * 6);
+      this.light.intensity = this.baseLightIntensity * (0.6 + beat * 0.5 + closeness * 0.5);
+    }
   }
 
   /**
@@ -102,55 +247,77 @@ export class GhostEnemyEntity {
    *
    * @param {number} delta
    * @param {Array<{uid, index, position, health, alive, onPlate}>} players
-   * @param {Array<THREE.Box3>} obstacleBoxes
-   * @param {(targetUid: string, amount: number) => void} onDamage
+   * @param {(targetUid: string) => void} onDamage
+   * @param {number} roomRange diagonal de la sala, para calibrar la puntuación
+   * @returns {string|null} uid perseguido
    */
-  update(delta, players = [], obstacleBoxes = [], onDamage) {
+  update(delta, players = [], onDamage, roomRange) {
+    this.elapsed += delta;
     this.animateIdle(delta);
 
-    const target = this.targetSelector.update(players, this.mesh.position, delta);
-    if (!target) return null;
+    const target = this.resolveTarget(players, delta, roomRange);
+    if (!target) {
+      this.distanceToTarget = Infinity;
+      return null;
+    }
 
-    this.setTargetIndicator(target.uid, players);
-    this.moveTowards(target.position, delta, obstacleBoxes);
+    this.distanceToTarget = target.distance;
+    this.setTargetIndicator(target.player.uid, players);
+    this.moveTowards(target.player.position, delta);
 
     if (this.damageCooldown > 0) {
       this.damageCooldown -= delta;
-    } else if (this.mesh.position.distanceTo(target.position) < ATTACK_RANGE) {
+    } else if (target.distance < ATTACK_RANGE) {
       this.damageCooldown = ATTACK_COOLDOWN;
       // El uid identifica a la víctima: antes el daño se atribuía siempre al host.
-      if (onDamage) onDamage(target.uid);
+      if (onDamage) onDamage(target.player.uid);
     }
 
-    return target.uid;
+    return target.player.uid;
   }
 
   /**
-   * Avanza hacia el objetivo directamente.
-   * El fantasma traspasa los muros y obstáculos geométricos.
+   * A quién persigue este fantasma.
+   *
+   * Con un fantasma por agente, cada uno tiene su presa asignada y no cambia: eso
+   * es lo que garantiza que nadie quede desatendido, que era el problema original.
+   * El selector por puntuación sigue vivo como respaldo para cuando esa presa muere
+   * o se desconecta, y es además lo que alimenta la rampa de agresividad.
    */
-  moveTowards(targetPosition, delta, obstacleBoxes) {
-    const direction = new THREE.Vector3(
-      targetPosition.x - this.mesh.position.x,
-      0,
-      targetPosition.z - this.mesh.position.z
-    );
-    if (direction.lengthSq() < 0.01) return;
-    direction.normalize();
+  resolveTarget(players, delta, roomRange) {
+    if (this.ownerUid) {
+      const owner = players.find(p => p.uid === this.ownerUid);
+      if (owner && owner.alive !== false && owner.health > 0) {
+        this.targetSelector.setTarget(this.ownerUid);
+        return this.targetSelector.emit(owner, this.mesh.position.distanceTo(owner.position));
+      }
+    }
+    return this.targetSelector.update(players, this.mesh.position, delta, roomRange);
+  }
 
-    const distance = this.speed * delta;
-    const baseAngle = Math.atan2(direction.x, direction.z);
+  /** Avanza en línea recta hacia el objetivo, atravesando la geometría. */
+  moveTowards(targetPosition, delta) {
+    const dx = targetPosition.x - this.mesh.position.x;
+    const dz = targetPosition.z - this.mesh.position.z;
+    const lengthSq = dx * dx + dz * dz;
+    if (lengthSq < 0.01) return;
 
-    const step = direction.multiplyScalar(distance);
-    this.mesh.position.add(step);
-    this.mesh.rotation.y = baseAngle;
+    const length = Math.sqrt(lengthSq);
+    const step = Math.min(this.speed * delta, length);
+
+    this.mesh.position.x += (dx / length) * step;
+    this.mesh.position.z += (dz / length) * step;
+
+    // Gira progresivamente, como el jugador; antes el ángulo se asignaba de golpe
+    // y el fantasma cambiaba de orientación de un fotograma a otro.
+    this.mesh.rotation.y = turnTowards(this.mesh.rotation.y, Math.atan2(dx, dz), delta, 6);
   }
 
   destroy() {
-    this.scene.remove(this.mesh);
-    this.mesh.traverse(child => {
-      if (child.geometry) child.geometry.dispose();
-      if (child.material) child.material.dispose();
-    });
+    disposeObject3D(this.mesh, this.scene);
+    // Geometrías compartidas entre los hijos: el recorrido las libera al toparse
+    // con la primera malla, y disponer de más es un no-op inofensivo.
+    if (this.shroudGeometry) this.shroudGeometry.dispose();
+    if (this.eyeGeometry) this.eyeGeometry.dispose();
   }
 }

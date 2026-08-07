@@ -25,7 +25,9 @@
     "validate:levels": "node scripts/validate-levels.js",
     "validate:puzzles": "node scripts/validate-puzzles.js",
     "validate:achievements": "node scripts/validate-achievements.js",
-    "validate": "npm run validate:levels && npm run validate:puzzles && npm run validate:achievements",
+    "validate:rooms": "node scripts/test-rooms.js",
+    "validate:leaks": "node scripts/check-leaks.js",
+    "validate": "npm run validate:levels && npm run validate:puzzles && npm run validate:achievements && npm run validate:rooms && npm run validate:leaks",
     "test:e2e": "node scripts/e2e/run.js"
   },
   "dependencies": {

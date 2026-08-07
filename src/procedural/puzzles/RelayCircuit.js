@@ -1,8 +1,11 @@
 import { PuzzleArchetype } from './PuzzleArchetype.js';
+import { paintNode } from './paint.js';
+import { PALETTE } from '../../engine/materials.js';
+import { clampPlayers } from '../../../shared/constants.js';
 
-const ANCHOR_COLOR = 0x9d00ff;
-const TERMINAL_IDLE = 0xffa500;
-const TERMINAL_DONE = 0x00ff66;
+const ANCHOR_COLOR = PALETTE.PURPLE;
+const TERMINAL_IDLE = PALETTE.PLATE_IDLE;
+const TERMINAL_DONE = PALETTE.PLATE_ACTIVE;
 
 /**
  * Circuito de relevo: un agente sostiene el ancla mientras los demás cierran los
@@ -24,7 +27,7 @@ export class RelayCircuit extends PuzzleArchetype {
 
   /** Un ancla más un terminal por cada agente restante. */
   static nodeCount(playersCount) {
-    return Math.max(2, Math.min(playersCount, 3)) + 1;
+    return Math.max(2, clampPlayers(playersCount)) + 1;
   }
 
   get objectiveKey() {
@@ -47,19 +50,18 @@ export class RelayCircuit extends PuzzleArchetype {
   }
 
   paintAnchor(held) {
-    this.anchor.padMat.color.setHex(ANCHOR_COLOR);
-    this.anchor.padMat.emissive.setHex(ANCHOR_COLOR);
-    this.anchor.padMat.emissiveIntensity = held ? 1.4 : 0.3;
-    this.anchor.pad.position.y = held ? 0.04 : 0.1;
-    if (this.anchor.beacon) this.anchor.beacon.material.opacity = held ? 0.85 : 0.35;
+    // El ancla brilla más que un terminal: es el nodo que hay que vigilar.
+    paintNode(this.anchor, held, {
+      color: ANCHOR_COLOR,
+      activeIntensity: 1.4,
+      idleIntensity: 0.3,
+      activeOpacity: 0.85,
+      idleOpacity: 0.35
+    });
   }
 
   paintTerminal(node, done) {
-    const color = done ? TERMINAL_DONE : TERMINAL_IDLE;
-    node.padMat.color.setHex(color);
-    node.padMat.emissive.setHex(color);
-    node.padMat.emissiveIntensity = done ? 1.2 : 0.25;
-    node.pad.position.y = done ? 0.04 : 0.1;
+    paintNode(node, done, { activeColor: TERMINAL_DONE, idleColor: TERMINAL_IDLE });
   }
 
   evaluate(players) {

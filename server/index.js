@@ -49,7 +49,14 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
   pingTimeout: 20000,
-  pingInterval: 10000
+  pingInterval: 10000,
+
+  // Un paquete de juego son unos cientos de bytes: una posición, un ángulo, un
+  // uid. El límite por defecto de socket.io es de 1 MB, tres órdenes de magnitud
+  // por encima de lo que este protocolo necesita, y en un servidor pequeño ese
+  // margen es exactamente el que permite que un cliente cualquiera reserve
+  // memoria a su antojo. 64 KB deja sitio de sobra para el mayor evento real.
+  maxHttpBufferSize: 64 * 1024
 });
 
 if (!apiIsConfigured()) {
@@ -59,7 +66,7 @@ if (!apiIsConfigured()) {
   );
 }
 
-registerSocketLayer(io);
+const roomManager = registerSocketLayer(io);
 
 httpServer.listen(PORT, () => {
   console.log(`⚡ Triad Vaults — servidor de salas en http://localhost:${PORT}`);
@@ -72,6 +79,7 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(`\n${signal} recibido, cerrando...`);
 
+  roomManager.stopSweeper();
   io.close();
   httpServer.close();
   process.exit(0);

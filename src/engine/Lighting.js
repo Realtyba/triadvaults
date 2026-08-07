@@ -1,5 +1,12 @@
 import * as THREE from 'three';
 import { quality } from './QualitySettings.js';
+import { PALETTE } from './materials.js';
+
+/** Semiancho del frustum ortográfico de sombra, en unidades de mundo. */
+const SHADOW_EXTENT = 35;
+
+/** Factor del sesgo por téxel; calibrado para que 1024 dé el valor que ya funcionaba. */
+const BIAS_PER_TEXEL = 0.015;
 
 /**
  * Iluminación de la sala.
@@ -20,7 +27,7 @@ export class EngineLighting {
     this.scene.add(this.ambientLight);
 
     // Cielo frío contra suelo cálido: separa techo de suelo sin coste.
-    this.hemiLight = new THREE.HemisphereLight(0x00f3ff, 0x1a0a14, 0.35);
+    this.hemiLight = new THREE.HemisphereLight(PALETTE.CYAN, 0x1a0a14, 0.35);
     this.hemiLight.position.set(0, 50, 0);
     this.scene.add(this.hemiLight);
 
@@ -48,15 +55,32 @@ export class EngineLighting {
     shadow.mapSize.height = size;
     shadow.camera.near = 0.5;
     shadow.camera.far = 120;
-    shadow.bias = -0.0006; // sin esto aparecen bandas de auto-sombreado en el suelo
-    shadow.normalBias = 0.02;
 
-    const d = 35;
+    const d = SHADOW_EXTENT;
     shadow.camera.left = -d;
     shadow.camera.right = d;
     shadow.camera.top = d;
     shadow.camera.bottom = -d;
     shadow.camera.updateProjectionMatrix();
+
+    this.applyShadowBias(size);
+  }
+
+  /**
+   * Sesgo de sombra proporcional al tamaño del téxel.
+   *
+   * Estaba fijo, calibrado para un tamaño de mapa concreto. Pero el mismo frustum
+   * de 70 unidades repartido entre 512 y 4096 téxeles da lados de 0,137 y 0,017:
+   * ocho veces de diferencia. Con un valor constante, el preset bajo mostraba
+   * bandas de auto-sombreado y el alto despegaba las sombras del suelo, y ninguna
+   * de las dos cosas parecía tener que ver con el ajuste de calidad.
+   */
+  applyShadowBias(mapSize) {
+    const texelWorldSize = (SHADOW_EXTENT * 2) / mapSize;
+    const shadow = this.dirLight.shadow;
+
+    shadow.bias = -0.6 * texelWorldSize * BIAS_PER_TEXEL;
+    shadow.normalBias = Math.max(0.01, texelWorldSize * 0.6);
   }
 
   applyQuality() {

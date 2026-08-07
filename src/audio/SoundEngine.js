@@ -1,3 +1,5 @@
+import { clamp01 } from '../utils/math.js';
+
 export class SoundEngine {
   constructor() {
     this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -7,6 +9,10 @@ export class SoundEngine {
     this.bgmGainNode = this.audioCtx.createGain();
     this.bgmGainNode.gain.value = 0;
     this.bgmGainNode.connect(this.audioCtx.destination);
+
+    this.heartbeatRunning = false;
+    this.heartbeatIntensity = 0;
+    this.heartbeatTimeout = null;
   }
 
   toggleMute() {
@@ -92,7 +98,7 @@ export class SoundEngine {
   setTension(tension) {
     if (this.isMuted || !this.isPlayingBGM) return;
 
-    const clamped = Math.max(0, Math.min(1, tension || 0));
+    const clamped = clamp01(tension || 0);
     const now = this.audioCtx.currentTime;
 
     // `setTargetAtTime` en vez de asignación directa: un salto de filtro se oye
@@ -101,6 +107,97 @@ export class SoundEngine {
       this.bgmFilter.frequency.setTargetAtTime(700 + clamped * 2600, now, 0.35);
     }
     this.bgmGainNode.gain.setTargetAtTime(0.15 + clamped * 0.12, now, 0.4);
+  }
+
+  /**
+   * Latido que se acelera con la cercanía del fantasma.
+   *
+   * Va aparte de `setTension` a propósito: aquella abre el filtro de la música, que
+   * es una señal continua y fácil de dejar de oír. Un pulso rítmico se percibe como
+   * algo que se acerca aunque no lo tengas a la vista, y es lo que convierte la
+   * persecución en algo que se siente antes de verla.
+   *
+   * Golpe grave y corto, del mismo corte procedural que el resto de efectos: dos
+   * osciladores por pulso, sin nada que cargar.
+   *
+   * @param {number} proximity de 0 (lejos) a 1 (encima)
+   */
+  setHeartbeat(proximity) {
+    const amount = clamp01(proximity || 0);
+
+    if (this.isMuted || amount <= 0.05) {
+      clearTimeout(this.heartbeatTimeout);
+      this.heartbeatTimeout = null;
+      this.heartbeatRunning = false;
+      return;
+    }
+
+    this.heartbeatIntensity = amount;
+    if (this.heartbeatRunning) return; // ya late; solo se actualiza el ritmo
+
+    this.heartbeatRunning = true;
+    const beat = () => {
+      if (!this.heartbeatRunning || this.isMuted) {
+        this.heartbeatRunning = false;
+        return;
+      }
+
+      const intensity = this.heartbeatIntensity;
+      this.playThump(0.06 + intensity * 0.1);
+
+      // De ~50 a ~110 pulsaciones por minuto.
+      const bpm = 50 + intensity * 60;
+      this.heartbeatTimeout = setTimeout(beat, 60000 / bpm);
+    };
+    beat();
+  }
+
+  /** Un golpe seco y grave. Es la unidad del latido. */
+  playThump(volume = 0.1) {
+    const osc = this.audioCtx.createOscillator();
+    const gain = this.audioCtx.createGain();
+    const now = this.audioCtx.currentTime;
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(64, now);
+    osc.frequency.exponentialRampToValueAtTime(34, now + 0.16);
+
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+    osc.connect(gain);
+    gain.connect(this.audioCtx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.22);
+  }
+
+  /**
+   * Aviso de que un fantasma te ha fijado a ti.
+   *
+   * Suena una sola vez, al cambiar el objetivo: si sonara de forma continua dejaría
+   * de significar nada.
+   */
+  playTargetLocked() {
+    if (this.isMuted) return;
+    const osc = this.audioCtx.createOscillator();
+    const gain = this.audioCtx.createGain();
+    const now = this.audioCtx.currentTime;
+
+    // Descendente y disonante: se lee como algo que se gira hacia ti.
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(220, now + 0.35);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.14, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+    osc.connect(gain);
+    gain.connect(this.audioCtx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.4);
   }
 
   /** Ahoga la música al pausar, sin cortarla. */
@@ -112,6 +209,7 @@ export class SoundEngine {
   stopBGM() {
     this.isPlayingBGM = false;
     this.bgmFilter = null;
+    this.setHeartbeat(0); // el latido no debe sobrevivir a la partida
     clearTimeout(this.bgmTimeout);
     this.bgmGainNode.gain.setTargetAtTime(0, this.audioCtx.currentTime, 0.5);
     setTimeout(() => {

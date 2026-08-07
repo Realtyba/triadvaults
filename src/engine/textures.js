@@ -19,6 +19,36 @@ function cached(key, factory) {
 }
 
 /**
+ * Anisotropía efectiva.
+ *
+ * Estaba fijada a 4 en el momento de crear la textura, y como la textura queda
+ * cacheada para siempre, subir la calidad gráfica no podía mejorarla nunca. Cuatro
+ * muestras se quedan cortas para el suelo: es una rejilla repetida hasta 18 veces
+ * vista en picado a unos 53°, que es el caso de libro del hormigueo por submuestreo.
+ *
+ * El renderer publica su máximo real (normalmente 16); se llama a `setMaxAnisotropy`
+ * al crearlo. Se topa en 8 porque a partir de ahí la mejora no se ve y el coste de
+ * muestreo sí.
+ */
+const ANISOTROPY_CAP = 8;
+let maxAnisotropy = 4;
+
+export function setMaxAnisotropy(value) {
+  const next = Math.max(1, Math.min(ANISOTROPY_CAP, Math.floor(value) || 1));
+  if (next === maxAnisotropy) return maxAnisotropy;
+
+  maxAnisotropy = next;
+  // Las texturas ya creadas siguen vivas en el caché: hay que reajustarlas o el
+  // cambio solo afectaría a los niveles que aún no se han visto.
+  cache.forEach(texture => {
+    if (texture.anisotropy === undefined) return;
+    texture.anisotropy = next;
+    texture.needsUpdate = true;
+  });
+  return maxAnisotropy;
+}
+
+/**
  * Rejilla tecnológica para el suelo: líneas finas, cruces marcadas y marcas de
  * esquina para que la repetición no se lea como un patrón plano.
  *
@@ -26,9 +56,14 @@ function cached(key, factory) {
  * @param {string} variant  clave de caché aparte. `repeat` es estado de la propia
  *   textura, así que dos superficies con escalas distintas —el suelo de la sala y
  *   la plataforma exterior— necesitan instancias separadas o se pisan entre sí.
+ * @param {{x: number, y: number}} [repeat] escala de repetición. Va en la clave de
+ *   caché justo por lo anterior: quien la pedía tenía que mutar el objeto devuelto,
+ *   y como el mismo tema se repite cada cinco niveles, dos superficies del mismo
+ *   color compartían instancia y la última en escribir ganaba.
  */
-export function createGridTexture(colorHex, variant = 'default') {
-  return cached(`grid:${colorHex}:${variant}`, () => {
+export function createGridTexture(colorHex, variant = 'default', repeat = null) {
+  const repeatKey = repeat ? `:${repeat.x}x${repeat.y}` : '';
+  return cached(`grid:${colorHex}:${variant}${repeatKey}`, () => {
     const size = 256;
     const canvas = document.createElement('canvas');
     canvas.width = size;
@@ -74,8 +109,9 @@ export function createGridTexture(colorHex, variant = 'default') {
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.anisotropy = 4;
+    texture.anisotropy = maxAnisotropy;
     texture.colorSpace = THREE.SRGBColorSpace;
+    if (repeat) texture.repeat.set(repeat.x, repeat.y);
     return texture;
   });
 }
@@ -107,6 +143,7 @@ export function createWallRoughnessTexture() {
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = maxAnisotropy;
     return texture;
   });
 }

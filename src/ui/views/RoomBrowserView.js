@@ -2,6 +2,7 @@ import { View } from './View.js';
 import { esc } from '../dom.js';
 import { icon } from '../icons.js';
 import { renderRoomCard } from '../components/RoomCard.js';
+import { ROOM_STATUS, CODE_LENGTH } from '../../../shared/constants.js';
 
 const FILTERS = [
   { id: 'all', key: 'filter_all' },
@@ -10,9 +11,26 @@ const FILTERS = [
 ];
 
 function applyFilter(rooms, filter) {
-  if (filter === 'joinable') return rooms.filter(r => r.joinable && r.status !== 'in_game');
-  if (filter === 'in_game') return rooms.filter(r => r.status === 'in_game');
+  if (filter === 'joinable') {
+    return rooms.filter(r => r.joinable && r.status !== ROOM_STATUS.IN_GAME);
+  }
+  if (filter === 'in_game') return rooms.filter(r => r.status === ROOM_STATUS.IN_GAME);
   return rooms;
+}
+
+/**
+ * Las tres listas de una vez.
+ *
+ * El contador de cada pestaña llamaba a `applyFilter` por su cuenta, así que la
+ * lista se recorría cuatro veces por repintado —una por pestaña más la visible—
+ * y con `ROOMS_UPDATED` llegando por cada movimiento del servidor eso se repetía
+ * constantemente.
+ */
+function partition(rooms) {
+  return FILTERS.reduce((acc, f) => {
+    acc[f.id] = applyFilter(rooms, f.id);
+    return acc;
+  }, {});
 }
 
 /**
@@ -25,14 +43,14 @@ function applyFilter(rooms, filter) {
 export class RoomBrowserView extends View {
   static keys = ['rooms', 'roomFilter', 'lang', 'user', 'connection'];
 
-  /** Escribir el código de sala no debe repintar la lista y perder el foco. */
-  shouldRender(state, dirty) {
-    return !dirty || dirty.size > 0;
-  }
+  // Sin `shouldRender` propio: el que había devolvía siempre true —`dirty` nunca
+  // llega vacío— y el foco del input ya lo conserva `View.render` guardando y
+  // restaurando el caret.
 
   template(state) {
     const rooms = state.rooms || [];
-    const visible = applyFilter(rooms, state.roomFilter);
+    const byFilter = partition(rooms);
+    const visible = byFilter[state.roomFilter] || rooms;
     const level = state.user ? state.user.maxLevelReached : 1;
 
     return `
@@ -49,7 +67,7 @@ export class RoomBrowserView extends View {
             data-field="roomCode"
             class="code-input"
             placeholder="${this.t('code')}"
-            maxlength="4"
+            maxlength="${CODE_LENGTH}"
             autocapitalize="characters"
             value="${esc(this.form.get('roomCode'))}"
           >
@@ -66,7 +84,7 @@ export class RoomBrowserView extends View {
                 class="filter-btn ${state.roomFilter === f.id ? 'is-active' : ''}"
                 data-action="room:filter"
                 data-filter="${f.id}"
-              >${this.t(f.key)} <span class="filter-btn__count">${applyFilter(rooms, f.id).length}</span></button>
+              >${this.t(f.key)} <span class="filter-btn__count">${byFilter[f.id].length}</span></button>
             `).join('')}
           </div>
         </header>

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { clamp01 } from '../utils/math.js';
 
 /**
  * Sacudida de cámara con decaimiento.
@@ -23,7 +24,7 @@ export class CameraShake {
 
   /** @param {number} amount de 0 a 1; se acumula, acotado al máximo. */
   add(amount) {
-    this.trauma = Math.min(1, this.trauma + amount);
+    this.trauma = clamp01(this.trauma + amount);
   }
 
   get isActive() {

@@ -6,6 +6,7 @@ import { createInitialState, FormState } from './state/initialState.js';
 import { MainMenuView } from './views/MainMenuView.js';
 import { LobbyView } from './views/LobbyView.js';
 import { HudView } from './views/HudView.js';
+import { TouchControlsView } from './views/TouchControlsView.js';
 import { ReconnectingOverlay } from './views/ReconnectingOverlay.js';
 import { AchievementToast } from './views/AchievementToast.js';
 import { ModalHost } from './modals/ModalHost.js';
@@ -16,6 +17,7 @@ import { el } from './dom.js';
 import { icon } from './icons.js';
 import { quality } from '../engine/QualitySettings.js';
 import { bindings } from '../engine/Bindings.js';
+import { isCoarsePointer, watchViewport } from '../engine/device.js';
 import { offlineStore } from '../network/OfflineStore.js';
 import { mirrorToSteam, reconcileWithSteam } from '../network/SteamBridge.js';
 
@@ -48,9 +50,15 @@ export class UIManager {
         audioMuted: localStorage.getItem(AUDIO_KEY) === 'true',
         quality: quality.level,
         qualityOptions: quality.options(),
-        controls: structuredClone(bindings.map)
+        controls: structuredClone(bindings.map),
+        isTouch: isCoarsePointer()
       })
     );
+
+    // Un convertible cambia de puntero al plegarse y un móvil al rotar, así que la
+    // clase del documento y el estado se recalculan, no se fijan al arrancar.
+    this.applyViewportState();
+    watchViewport(() => this.applyViewportState());
 
     // Sesión a medias (usuario sin token): se limpia para no mostrar un menú inservible.
     if (!session.isValid()) session.clear();
@@ -91,6 +99,9 @@ export class UIManager {
       main: el('div', { className: 'view view--main' }),
       lobby: el('div', { className: 'view view--lobby hidden' }),
       hud: el('div', { className: 'view view--hud hidden' }),
+      // Va después del HUD y antes de los modales: por encima de los marcadores,
+      // por debajo de cualquier diálogo.
+      touch: el('div', { className: 'touch-layer hidden' }),
       modal: el('div', { className: 'modal-host hidden' }),
       reconnect: el('div', { className: 'reconnect-overlay hidden' }),
       // Fuera de las vistas: los avisos de logro se ven en el menú y en partida.
@@ -125,25 +136,33 @@ export class UIManager {
     this.mainMenu = new MainMenuView(this.nodes.main, this.ctx);
     this.lobby = new LobbyView(this.nodes.lobby, this.ctx);
     this.hud = new HudView(this.nodes.hud, this.ctx);
+    this.touchControls = new TouchControlsView(this.nodes.touch, this.ctx, this.game.input.touch);
     this.modals = new ModalHost(this.nodes.modal, this.ctx);
     this.reconnect = new ReconnectingOverlay(this.nodes.reconnect, this.ctx);
     this.toasts = new AchievementToast(this.nodes.toast, this.ctx);
 
     this.mainMenu.mount(state);
     this.hud.mount();
+    this.touchControls.mount();
 
     this.subscribeView(this.mainMenu, MainMenuView.keys ?? null);
     this.subscribeView(this.lobby, LobbyView.keys);
     this.subscribeView(this.hud, HudView.keys);
+    this.subscribeView(this.touchControls, TouchControlsView.keys);
     this.subscribeView(this.modals, ModalHost.keys);
     this.subscribeView(this.reconnect, ReconnectingOverlay.keys);
 
     this.store.subscribe(['view'], s => this.applyViewVisibility(s));
     this.store.subscribe(['lang', 'audioMuted'], () => this.renderTopBar());
+    // Los avisos que llegaron mientras había un modal bloqueante salen ahora.
+    this.store.subscribe(['modal'], s => {
+      if (!s.modal) this.flushPendingAlert();
+    });
 
     this.applyViewVisibility(state);
     this.lobby.render(state, null);
     this.hud.render(state);
+    this.touchControls.render(state);
     this.modals.render(state, null);
     this.reconnect.render(state, null);
   }
@@ -294,6 +313,53 @@ export class UIManager {
     this.store.patch({ gamepadName: name });
   }
 
+  /** El dedo se detecta al primer toque, no al arrancar: se refleja igual que el mando. */
+  setTouchActive() {
+    this.store.patch({ inputMode: 'touch' });
+  }
+
+  // ------------------------------------------------------- puerta de acceso
+
+  /**
+   * ¿Está la cuenta en condiciones de jugar?
+   *
+   * Con la sesión iniciada y el correo sin verificar, **no se juega de ninguna
+   * manera**: ni en sala ni sin conexión. Quien quiera seguir jugando sin conexión
+   * tiene que cerrar sesión, y el botón para hacerlo está en el propio modal que
+   * abre esta función.
+   *
+   * Sin sesión no hay nada que verificar y se juega sin más; ése es justamente el
+   * caso para el que existe el modo sin conexión.
+   *
+   * Vive aquí y no en `RoomController` porque la comprobación estaba solo en el
+   * camino de las salas, y por eso la partida sin conexión se colaba por el lado.
+   */
+  requireVerifiedAccount() {
+    const user = this.store.get().user;
+    if (!user || user.isVerified !== false) return true;
+
+    this.openModal('verify');
+    return false;
+  }
+
+  /**
+   * Forma y capacidades de la ventana.
+   *
+   * Se marcan también como clases del documento porque hay reglas de CSS que no
+   * pueden expresarse con una consulta de medios: `(pointer: coarse)` no distingue
+   * una tableta apaisada de un móvil, y el HUD necesita reordenarse por lo segundo.
+   */
+  applyViewportState() {
+    const isTouch = isCoarsePointer();
+    const isPortrait = window.innerHeight > window.innerWidth;
+
+    const root = document.documentElement;
+    root.classList.toggle('is-touch', isTouch);
+    root.classList.toggle('is-portrait', isPortrait);
+
+    this.store.patch({ isTouch, isPortrait });
+  }
+
   dispatch(action, dataset) {
     const handler = this.actions[action];
     if (!handler) return;
@@ -369,7 +435,11 @@ export class UIManager {
       this.rejoinTimer = setTimeout(() => this.onRoomLost(), UIManager.REJOIN_GRACE_MS);
     }
 
-    if (this.store.get().user) this.refreshMenuData();
+    // La misma guarda que hace `AuthController.onAuthenticated` al iniciar sesión.
+    // Aquí faltaba, y era el camino por el que la sincronización sin conexión
+    // acababa lanzando su aviso encima del modal de verificación.
+    const user = this.store.get().user;
+    if (user && user.isVerified !== false) this.refreshMenuData();
   }
 
   onDisconnected(roomCode) {
@@ -551,6 +621,10 @@ export class UIManager {
    * sala construyan la misma bóveda, y aquí no hay segundo cliente.
    */
   startOffline() {
+    // Era el único camino al juego sin comprobar la cuenta, y el que dejaba a un
+    // correo sin verificar acumular partidas que después se sincronizaban.
+    if (!this.requireVerifiedAccount()) return;
+
     this.offlineSeed = Math.floor(Math.random() * 1e9);
     this.store.patch({ offline: true, modal: null });
     this.game.startLevel({
@@ -685,7 +759,39 @@ export class UIManager {
     this.store.patch(patch);
   }
 
+  /**
+   * Punto único para abrir un modal, con una regla: **un modal bloqueante no se
+   * desplaza**.
+   *
+   * Solo hay un hueco de modal, así que cualquier `patch({ modal })` pisaba el que
+   * hubiera. Eso convertía en incidental un bloqueo que debería ser explícito: la
+   * verificación de correo se cerraba sola en cuanto la sincronización sin conexión
+   * anunciaba su resultado, y como ese aviso sí es descartable, el jugador se
+   * quedaba con el menú libre y la cuenta todavía sin verificar.
+   *
+   * Los avisos que llegan mientras hay una puerta abierta no se pierden: esperan en
+   * la cola y salen cuando la puerta se resuelve.
+   */
+  openModal(id, patch = {}) {
+    const current = this.store.get().modal;
+    if (current && current !== id && BLOCKING_MODALS.has(current)) {
+      if (id === 'alert') this.pendingAlert = patch.alertMessage;
+      return false;
+    }
+
+    this.store.patch({ modal: id, ...patch });
+    return true;
+  }
+
+  /** Suelta el aviso que se quedó esperando a que se cerrase un modal bloqueante. */
+  flushPendingAlert() {
+    if (!this.pendingAlert) return;
+    const message = this.pendingAlert;
+    this.pendingAlert = null;
+    this.alert(message);
+  }
+
   alert(message) {
-    this.store.patch({ modal: 'alert', alertMessage: message });
+    this.openModal('alert', { alertMessage: message });
   }
 }

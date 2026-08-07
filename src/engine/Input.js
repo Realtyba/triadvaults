@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { bindings } from './Bindings.js';
 import { GamepadInput } from './Gamepad.js';
+import { TouchInput } from './TouchInput.js';
 
 /**
- * Entrada del jugador: teclado remapeable y mando.
+ * Entrada del jugador: teclado remapeable, mando y dedo.
  *
- * Ambos se leen en coordenadas de **pantalla** (x a la derecha, y hacia abajo) y se
+ * Los tres se leen en coordenadas de **pantalla** (x a la derecha, y hacia abajo) y se
  * convierten a mundo en un único sitio. Antes cada tecla sumaba a mano su par de
  * componentes isométricas, y esa conversión repetida cinco veces no dejaba sitio
  * para un stick analógico.
@@ -28,6 +29,7 @@ export class EngineInput {
   constructor() {
     this.keys = { up: false, down: false, left: false, right: false, interact: false };
     this.gamepad = new GamepadInput();
+    this.touch = new TouchInput();
     this.moveVector = new THREE.Vector3();
 
     /** Acciones de mando sin equivalente en el bucle: las consume `GameApp`. */
@@ -85,11 +87,13 @@ export class EngineInput {
   }
 
   /**
-   * Sondea el mando. Se llama una vez por fotograma desde el bucle, **también en
-   * pausa**: si solo se leyera durante la simulación, el botón Start podría abrir el
-   * menú pero no cerrarlo.
+   * Sondea los dispositivos que no avisan por eventos. Se llama una vez por fotograma
+   * desde el bucle, **también en pausa**: si solo se leyera durante la simulación, el
+   * botón Start podría abrir el menú pero no cerrarlo.
    */
   update() {
+    this.touchAxes = this.touch.poll();
+
     this.pad = this.gamepad.poll();
     if (!this.pad || this.pad.justPressed.size === 0) return;
 
@@ -104,6 +108,24 @@ export class EngineInput {
 
   get hasGamepad() {
     return this.gamepad.isConnected;
+  }
+
+  get hasTouch() {
+    return this.touch.isActive;
+  }
+
+  /**
+   * Qué está usando el jugador ahora mismo, para el indicador del HUD.
+   *
+   * El mando gana al dedo porque quien enchufa uno en un móvil lo hace para usarlo;
+   * el dedo gana al teclado porque en un táctil el teclado no existe. No se guarda
+   * "el último usado" a propósito: el indicador cambiaría de sitio cada vez que se
+   * roza la pantalla con la palma.
+   */
+  get mode() {
+    if (this.gamepad.isConnected) return 'gamepad';
+    if (this.touch.isActive) return 'touch';
+    return 'keyboard';
   }
 
   /**
@@ -128,10 +150,15 @@ export class EngineInput {
       sy += this.pad.y;
     }
 
+    if (this.touchAxes) {
+      sx += this.touchAxes.x;
+      sy += this.touchAxes.y;
+    }
+
     const length = Math.hypot(sx, sy);
     if (length === 0) return this.moveVector.set(0, 0, 0);
 
-    // Teclado y mando pueden sumar más de 1 si se usan a la vez; se recorta sin
+    // Teclado, mando y dedo pueden sumar más de 1 si se usan a la vez; se recorta sin
     // tocar la intensidad analógica cuando ya venía por debajo.
     const scale = Math.min(1, length) / length;
     return this.moveVector.set((sx + sy) * scale * ISO, 0, (sy - sx) * scale * ISO);

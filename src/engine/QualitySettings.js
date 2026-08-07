@@ -9,6 +9,8 @@
  * `Lighting` y `Particles`, que son los que gastan.
  */
 
+import { isCoarsePointer, isHandheld, isMobileGpu } from './device.js';
+
 const STORAGE_KEY = 'triad_quality';
 
 export const QUALITY_LEVELS = ['bajo', 'medio', 'alto', 'ultra'];
@@ -38,6 +40,9 @@ const PRESETS = {
     bloomThreshold: 0.62,
     antialias: false,
     smaa: false,
+    // Muestreo anisotrópico del suelo. En una GPU móvil cada muestra extra se paga
+    // en el fragmento más repetido de la escena, y a esta resolución no se aprecia.
+    anisotropy: 1,
     ambientParticles: 0,
     impactParticles: 0,
     cornerLights: 2,
@@ -57,6 +62,7 @@ const PRESETS = {
     bloomThreshold: 0.62,
     antialias: false,
     smaa: false,
+    anisotropy: 4,
     ambientParticles: 120,
     impactParticles: 12,
     cornerLights: 4,
@@ -78,6 +84,7 @@ const PRESETS = {
     bloomThreshold: 0.7,
     antialias: true,
     smaa: false, // ya hay MSAA; ver el comentario de `ultra`
+    anisotropy: 8,
     ambientParticles: 260,
     impactParticles: 22,
     cornerLights: 4,
@@ -105,6 +112,7 @@ const PRESETS = {
     // MSAA y SMAA hacen el mismo trabajo. Tenerlos los dos no suavizaba el doble:
     // sumaba dos búferes a resolución completa por la cara.
     smaa: false,
+    anisotropy: 8,
     ambientParticles: 420,
     impactParticles: 34,
     cornerLights: 6,
@@ -122,6 +130,15 @@ const PRESETS = {
  * Se mira el renderer real vía `WEBGL_debug_renderer_info` porque
  * `devicePixelRatio` alto no implica GPU potente — un portátil con pantalla
  * retina e integrada es justo el caso que se atragantaría con `ultra`.
+ *
+ * **Los móviles se comprueban primero y por dos vías.** Antes solo había
+ * heurísticas de escritorio, así que un Adreno o un Mali no encajaba en ninguna y
+ * caía en la línea final, donde un `devicePixelRatio` de 3 —que tiene cualquier
+ * teléfono— se leía como "pantalla buena, luego GPU buena" y devolvía `alto`. El
+ * resultado era que el aparato más débil arrancaba con sombras de 2048, suavizado y
+ * post-procesado. La cadena del renderer no basta por sí sola: **Safari en iOS
+ * oculta esa extensión**, así que el respaldo por puntero grueso no es un extra,
+ * es la única prueba que queda en un iPhone.
  */
 function detectLevel() {
   if (typeof document === 'undefined') return 'alto';
@@ -135,11 +152,18 @@ function detectLevel() {
     const renderer = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
     const lowered = renderer.toLowerCase();
 
+    // Móvil o tableta: el preset bajo es exactamente lo que necesitan.
+    if (isMobileGpu(lowered)) return 'bajo';
+    if (isHandheld()) return 'bajo';
+
     // Software o integradas antiguas: no aguantan el postprocesado.
     if (/swiftshader|llvmpipe|software/.test(lowered)) return 'bajo';
     if (/intel.*(hd|uhd) graphics (5|6)/.test(lowered)) return 'bajo';
     if (/intel/.test(lowered) && !/arc|iris xe/.test(lowered)) return 'medio';
 
+    // Un ratón descarta el caso anterior; la densidad de píxel ya solo distingue
+    // entre una pantalla de trabajo y una normal.
+    if (isCoarsePointer()) return 'medio';
     return window.devicePixelRatio > 1.5 ? 'alto' : 'medio';
   } catch {
     return 'medio';

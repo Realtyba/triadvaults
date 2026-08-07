@@ -2,7 +2,7 @@ import { DEFAULT_ACHIEVEMENTS, sortCatalog } from '../../../shared/achievements.
 import { offlineStore } from '../../network/OfflineStore.js';
 
 /** Estado reactivo de la UI. Los valores de formularios NO viven aquí: ver `FormState`. */
-export function createInitialState({ user, lang, audioMuted, quality, qualityOptions, controls }) {
+export function createInitialState({ user, lang, audioMuted, quality, qualityOptions, controls, isTouch = false }) {
   return {
     view: 'main', // 'main' | 'lobby' | 'hud'
     modal: null,
@@ -15,6 +15,11 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     controls, // asignación de teclas vigente, acción → [principal, alternativa]
     capturingBind: null, // "acción:hueco" mientras se espera una pulsación
     gamepadName: null, // identificador del mando conectado, si lo hay
+    // El aparato admite dedo: decide si se monta la capa de controles táctiles. Es
+    // una propiedad del dispositivo, no de lo que el jugador esté usando ahora.
+    isTouch,
+    // Portrait obliga a recolocar el HUD, no solo a encogerlo.
+    isPortrait: false,
 
     // sesión
     user,
@@ -58,7 +63,7 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     puzzleProgress: 0,
     puzzleSolved: false,
     elapsedTime: 0,
-    hasGamepad: false,
+    inputMode: 'keyboard', // lo que el jugador está usando: 'keyboard' | 'gamepad' | 'touch'
     paused: false,
     canRegenerate: false,
     alertMessage: ''

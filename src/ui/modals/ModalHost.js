@@ -16,6 +16,7 @@ export class ModalHost extends View {
     'controls',
     'capturingBind',
     'gamepadName',
+    'isTouch',
     'lang'
   ];
 

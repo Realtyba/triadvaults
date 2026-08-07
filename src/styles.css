@@ -30,8 +30,13 @@
   --text-faint: #5d6b80;
 
   /* Escala tipográfica. Antes cada bloque elegía su tamaño a ojo y nada guardaba
-     relación con lo demás; de ahí que todo pesara igual y no hubiera jerarquía. */
-  --fs-3xl: 3.2rem;
+     relación con lo demás; de ahí que todo pesara igual y no hubiera jerarquía.
+
+     El tamaño mayor es fluido porque es el único que puede desbordar por sí solo:
+     "TRIAD VAULTS" en Orbitron 900 con separación de 0.14em mide más que un móvil
+     estrecho, y `.menu-shell` recorta con `overflow: hidden` en vez de dar barra,
+     así que el título se cortaba sin que hubiera forma de leerlo entero. */
+  --fs-3xl: clamp(1.7rem, 7.5vw, 3.2rem);
   --fs-2xl: 1.75rem;
   --fs-xl: 1.25rem;
   --fs-lg: 1rem;
@@ -98,18 +103,38 @@ html,
 body {
   width: 100%;
   height: 100%;
+  /* `dvh` sigue a la barra de URL de los navegadores móviles, que se contrae al
+     desplazarse. Con `100%` a secas el lienzo quedaba más alto que el área visible
+     y el HUD inferior se escondía debajo del borde. Se deja el `100%` delante como
+     respaldo para quien no entienda la unidad. */
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg-dark);
   color: var(--text-main);
+
+  /* Sin esto, un tirón hacia abajo en el móvil dispara el "recargar" del navegador
+     y se pierde la partida en curso. */
+  overscroll-behavior: none;
 }
 
 body {
   user-select: none;
+  /* El recuadro gris que pinta Android al tocar no encaja con nada del tema. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 input,
 textarea {
   user-select: text;
+}
+
+/* Suprime la espera de 300 ms del doble toque en todo lo pulsable: sin ella cada
+   botón responde con un retraso que se siente como que el juego va lento. */
+button,
+[data-action],
+label,
+select {
+  touch-action: manipulation;
 }
 
 #canvas-container {
@@ -1073,9 +1098,14 @@ label {
   background: none;
   color: var(--accent);
   font-family: 'Orbitron', sans-serif;
-  font-size: 2.6rem;
+  /* Seis caracteres a 2.6rem con 0.3em de separación miden más de 330 px, y el
+     panel deja 304 útiles en un móvil estrecho: el código de sala —lo único que
+     hay que leer para invitar a alguien— se salía del recuadro. */
+  font-size: clamp(1.5rem, 9vw, 2.6rem);
   font-weight: 900;
   letter-spacing: 0.3em;
+  /* Compensa la separación del último carácter, que sin esto descentra el bloque. */
+  text-indent: 0.3em;
   cursor: pointer;
   text-shadow: 0 0 20px rgba(0, 243, 255, 0.5);
 }
@@ -1245,7 +1275,11 @@ label {
 .modal {
   position: relative;
   width: min(460px, calc(100% - 40px));
+  /* `vh` en un móvil es la altura *con la barra de URL retraída*, así que un modal
+     alto se salía por abajo justo cuando la barra estaba desplegada. `dvh` mide lo
+     que de verdad se ve. */
   max-height: 82vh;
+  max-height: 82dvh;
   overflow-y: auto;
   padding: var(--space-5) var(--space-4);
   text-align: center;
@@ -2066,4 +2100,568 @@ label {
 .credits-section__text {
   font-size: var(--fs-sm);
   color: var(--text-muted);
+}
+
+/* ================================================================= 12. táctil */
+/*
+   Controles táctiles.
+
+   La capa es hermana del HUD, no hija: `#ui-layer > *` solo concede eventos de
+   puntero a los hijos directos, y el joystick necesita recibir el dedo aunque el
+   HUD no lo haga. Se muestra únicamente en partida y sin ningún diálogo abierto,
+   que es lo que garantiza que un dedo sobre el modal de pausa no siga moviendo al
+   agente por detrás.
+*/
+.touch-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  /* Sin esto el navegador se queda el gesto para desplazar o hacer zoom, y el
+     joystick recibe un `pointercancel` en cuanto el dedo se mueve un poco. */
+  touch-action: none;
+  user-select: none;
+}
+
+/* El pomo y el anillo se posicionan desde el origen del gesto, así que parten de
+   la esquina y todo el movimiento es `transform`: nunca recalculan el diseño. */
+.touch-stick {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease-out);
+  pointer-events: none;
+}
+
+.touch-stick.is-active {
+  opacity: 1;
+}
+
+/* Se centran con márgenes negativos y NO con `translate(-50%, -50%)`: el pomo
+   recibe su propio `transform` desde el gesto, que reemplazaría al de centrado y
+   dejaría los dos círculos desalineados entre sí. */
+.touch-stick__base,
+.touch-stick__knob {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.touch-stick__base {
+  width: 128px;
+  height: 128px;
+  margin: -64px 0 0 -64px;
+  border: 1px solid var(--glass-border);
+  background: rgba(8, 11, 22, 0.35);
+  backdrop-filter: blur(2px);
+}
+
+.touch-stick__knob {
+  width: 58px;
+  height: 58px;
+  margin: -29px 0 0 -29px;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 18px var(--accent-soft);
+}
+
+/* Botón de acción de la capa táctil: cuadrado, grande y despegado del borde para
+   que no compita con los gestos de sistema del navegador. */
+.touch-btn {
+  position: absolute;
+  /* Alineado con el borde superior de la barra del HUD, que en móvil arranca a
+     8 px: así se lee como el extremo derecho de esa misma barra y no como algo
+     suelto encima. El hueco lo reserva `.is-touch .view--hud > .hud-bar`. */
+  top: calc(8px + env(safe-area-inset-top));
+  right: calc(8px + env(safe-area-inset-right));
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-bg);
+  color: var(--accent);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.touch-btn:active {
+  background: var(--accent-soft);
+}
+
+/* ------------------------------------------------- objetivos táctiles mínimos */
+/*
+   44 px es el mínimo por debajo del cual un dedo falla más de lo que acierta. Va
+   en `pointer: coarse` y no en un ancho concreto porque el problema es el tamaño
+   del dedo, no el de la pantalla: una tableta apaisada lo necesita igual.
+*/
+@media (pointer: coarse) {
+  .btn-sm {
+    padding: 10px 14px;
+  }
+
+  .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .filter-btn {
+    padding: 9px 12px;
+  }
+
+  .link-btn {
+    padding: 10px 4px;
+  }
+
+  .rank-th,
+  .rank-table td {
+    padding: 10px 6px;
+  }
+
+  .key-slot {
+    min-height: 40px;
+  }
+
+  /* El desplazamiento lateral con el dedo no deja ver el resalte al pasar por
+     encima, y los que mueven el elemento se leen como un fallo de pintado. */
+  .room-card:hover {
+    transform: none;
+  }
+}
+
+
+/* ------------------------------------------------------------ HUD en móvil */
+/*
+   Regla de diseño: **en partida manda la bóveda, no los marcadores.**
+
+   El HUD de escritorio son cuatro paneles con etiqueta y relleno generoso. Apilados
+   en un móvil ocupaban un tercio largo de la pantalla y dejaban jugando en una
+   ranura. Aquí se reduce a tres piezas finas:
+
+     · una línea arriba con nivel, agentes y estado — sin etiquetas, porque
+       "AGENTES CONECTADOS" ocupa cinco veces más que el `1/3` que importa, y el
+       dato se entiende solo;
+     · el objetivo justo debajo, en dos líneas como mucho;
+     · la vida como una banda delgada **pegada al borde inferior**, fuera del paso.
+
+   El resto de la pantalla queda para el juego.
+*/
+@media (max-width: 720px), (pointer: coarse) and (max-height: 480px) {
+  .view--hud {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    /* `.view` centra en el eje principal; aquí los marcadores tienen que quedarse
+       arriba, no flotando en mitad de la bóveda. */
+    justify-content: flex-start;
+    gap: 4px;
+    padding: calc(6px + env(safe-area-inset-top)) 8px 0;
+  }
+
+  /* Las dos piezas que van en el flujo, de arriba abajo. */
+  .view--hud > .hud-bar,
+  .view--hud > .hud-objective {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    margin: 0;
+    transform: none;
+  }
+
+  /*
+     Una línea y sólo una. Antes de recortar nada se prueba a encoger el nombre del
+     bioma —"13 · MATRIX ESMERALDA"— que es lo único largo y lo menos útil de los
+     tres datos: con `wrap` la barra se partía en dos a 360 px y volvía a comerse el
+     doble de alto.
+  */
+  .hud-bar {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    align-items: baseline;
+    gap: 12px;
+    padding: 5px 12px;
+    /* Hueco para el botón de pausa, que flota sobre esta esquina. */
+    padding-right: 60px;
+  }
+
+  .hud-bar .hud-item:first-child {
+    min-width: 0;
+  }
+
+  .hud-bar .hud-item:first-child .hud-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .hud-bar .hud-item:not(:first-child) {
+    flex-shrink: 0;
+  }
+
+  /* Semilla y código no se consultan durante la acción: siguen en el menú de
+     pausa, que es donde se copian para invitar a alguien. */
+  .hud-bar .hud-item:nth-child(2),
+  .hud-bar .hud-item:nth-child(3) {
+    display: none;
+  }
+
+  /* Sin etiquetas: es lo que convierte tres bloques de dos líneas en una sola. */
+  .hud-bar .hud-label {
+    display: none;
+  }
+
+  .hud-item {
+    flex-direction: row;
+  }
+
+  .hud-value {
+    font-size: 0.72rem;
+  }
+
+  /* La pausa de la barra sobra: la capa táctil pone la suya, más grande. */
+  .is-touch .hud-bar [data-action='game:pause'] {
+    display: none;
+  }
+
+  /* Sin táctil (un móvil con teclado, o el modo de dispositivo del navegador) la
+     pausa sigue haciendo falta, pero como botón compacto que no parte la línea. */
+  .hud-bar [data-action='game:pause'] {
+    margin-left: auto;
+    padding: 4px 10px;
+    font-size: 0.6rem;
+  }
+
+  .hud-objective {
+    padding: 6px 12px;
+    text-align: left;
+  }
+
+  /* El rótulo "OBJETIVO DE SALA" repite lo que ya dice el texto de debajo. */
+  .hud-objective__tag,
+  .hud-objective__hint {
+    display: none;
+  }
+
+  .hud-objective__desc {
+    margin: 0 0 5px;
+    font-size: 0.76rem;
+    line-height: 1.3;
+  }
+
+  .hud-objective .bar {
+    height: 3px;
+  }
+
+  /*
+     Vida al borde inferior, a lo ancho y delgada.
+
+     Es el dato que más se mira y el que menos texto necesita: el color y el largo
+     ya lo dicen. Abajo no tapa la bóveda —la cámara sigue al agente, que va
+     centrado— y queda lejos del pulgar del joystick.
+  */
+  .view--hud > .hud-health {
+    position: absolute;
+    top: auto;
+    bottom: calc(env(safe-area-inset-bottom) + 4px);
+    left: calc(env(safe-area-inset-left) + 8px);
+    /* Deja sitio al cronómetro, que va en la misma franja. */
+    right: calc(env(safe-area-inset-right) + 74px);
+    width: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+  }
+
+  .hud-health__label {
+    margin: 0;
+    flex-shrink: 0;
+    font-size: 0.54rem;
+  }
+
+  .view--hud > .hud-health .bar {
+    flex: 1;
+    height: 5px;
+  }
+
+  /*
+     Cronómetro al lado de la vida, en la misma franja de abajo.
+
+     Arriba obligaba a reservarle un hueco a la barra, y ese hueco era justo lo que
+     hacía que el nombre del bioma no cupiera en una línea. Abajo comparte franja
+     con la vida, que es el otro dato de consulta y no de reacción.
+  */
+  .view--hud > .hud-timer {
+    position: absolute;
+    top: auto;
+    bottom: calc(env(safe-area-inset-bottom) + 4px);
+    right: calc(env(safe-area-inset-right) + 8px);
+    display: flex;
+    align-items: center;
+    padding: 4px 10px;
+  }
+
+  /* El rótulo "TIEMPO" y el indicador de mando ocupan más de lo que informan
+     mientras se está jugando. */
+  .hud-timer__label,
+  .hud-input-mode {
+    display: none;
+  }
+
+  .hud-timer__value {
+    font-size: 0.76rem;
+  }
+
+  /* Sin capa táctil no hay botón flotante, así que el hueco reservado sobra. */
+  html:not(.is-touch) .hud-bar {
+    padding-right: 12px;
+  }
+}
+
+/* En apaisado corto lo que escasea es el alto: se recorta por ahí. */
+@media (pointer: coarse) and (max-height: 480px) {
+  .view--hud {
+    gap: 3px;
+    padding-top: calc(4px + env(safe-area-inset-top));
+  }
+
+  .hud-objective__desc {
+    font-size: 0.72rem;
+  }
+}
+
+/* ------------------------------------------------------- pantallas de menú */
+@media (max-width: 720px) {
+  /* Reducir los tokens reescala de golpe casi toda la interfaz: paddings, huecos
+     y tipografías salen de aquí. Es el motivo de que abajo solo queden los casos
+     que además cambian de forma. */
+  :root {
+    --fs-2xl: 1.4rem;
+    --fs-xl: 1.1rem;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+  }
+
+  .view {
+    padding: 56px 12px 20px;
+  }
+
+  /* Flota sobre el menú, que se desplaza por debajo. En una pantalla estrecha el
+     texto pasaba entre los botones y la barra se leía como contenido roto; con
+     fondo propio se entiende que está por encima. */
+  .top-bar {
+    top: calc(10px + env(safe-area-inset-top));
+    right: calc(12px + env(safe-area-inset-right));
+    gap: 6px;
+    padding: 5px 7px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+  }
+
+  .menu-shell {
+    padding: var(--space-4) 14px 14px;
+  }
+
+  .lobby-shell {
+    padding: 18px 14px;
+  }
+
+  .modal {
+    padding: var(--space-4) 16px;
+  }
+
+  /* La cabecera de panel mete el título y los filtros en la misma fila; a esta
+     anchura los tres filtros no caben junto al título. */
+  .panel__header {
+    flex-wrap: wrap;
+  }
+
+  .filter-group {
+    flex-wrap: wrap;
+  }
+
+  /* Nombre y apellido, uno debajo de otro: a 360 px cada campo se quedaba en
+     150 px con 14 px de relleno a cada lado. */
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Tres agentes en fila dejaban ~95 px por tarjeta, y el nombre se comía los
+     puntos suspensivos hasta desaparecer. */
+  .player-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* ---- perfil ---- */
+  /* De una fila con las estadísticas empujadas a la derecha a un bloque vertical:
+     identidad, estadísticas en rejilla y acciones a lo ancho. */
+  .profile-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .profile-card__stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px 14px;
+    margin-left: 0;
+  }
+
+  .profile-card__actions {
+    flex-wrap: wrap;
+  }
+
+  .profile-card__actions > * {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  /* El margen negativo cancela el hueco del menú cuando la tarjeta es una sola
+     fila. Apilada, esos 10 px se comen los botones: es el solape que se veía. */
+  .panel--badges {
+    margin-top: 0;
+  }
+
+  /* ---- salas ---- */
+  .room-card {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .room-card__side {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .join-by-code {
+    flex-wrap: wrap;
+  }
+
+  .room-list {
+    max-height: none;
+  }
+
+  /* Acción, tecla principal y alternativa en tres columnas fijas dentro de un
+     modal de 380 px: el nombre de la acción quedaba en 120 px. */
+  .key-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .key-row__name {
+    margin-bottom: 2px;
+  }
+
+  .toast-host {
+    top: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    right: 12px;
+    left: 12px;
+  }
+
+  .toast {
+    width: 100%;
+  }
+}
+
+/*
+   Un hijo de rejilla mide `min-width: auto` por defecto, es decir, **no baja de lo
+   que ocupa su contenido**. Con el ranking dentro, la columna se estiraba hasta los
+   460 px de la tabla y arrastraba consigo el panel, el contenedor del menú y con él
+   el botón de crear sala y el campo del código, que acababan fuera de la pantalla.
+   Ésta es la línea que permite que nada de lo de abajo desborde.
+*/
+.menu-columns > * {
+  min-width: 0;
+}
+
+/* Entre el móvil y el escritorio la tabla aún puede quedar justa; ahí se desplaza
+   ella sola en vez de estirar la columna. */
+.rank-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* -------------------------------------------------------- ranking en móvil */
+/*
+   Cinco columnas no caben en 360 px por mucho que se encoja la letra, y dejarlas
+   con barra horizontal obliga a arrastrar para leer el nivel de cada agente. Cada
+   fila pasa a ser una ficha: nombre arriba, posición a la derecha y las tres cifras
+   en línea debajo. Es el mismo HTML —la tabla sigue siendo una tabla para quien
+   navega con lector de pantalla—, solo cambia cómo se coloca.
+*/
+@media (max-width: 720px) {
+  .rank-table,
+  .rank-table tbody,
+  .rank-table tr,
+  .rank-table td {
+    display: block;
+    width: auto;
+  }
+
+  .rank-table thead {
+    display: none;
+  }
+
+  .rank-table tr {
+    position: relative;
+    margin-bottom: var(--space-2);
+    padding: 10px 12px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .rank-table tr.is-me {
+    border-color: var(--accent);
+  }
+
+  .rank-table td {
+    padding: 0;
+    border: none;
+  }
+
+  /* Posición, como distintivo en la esquina. */
+  .rank-table td:first-child {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+  }
+
+  /* Agente: nombre y usuario, con sitio reservado para el distintivo. */
+  .rank-table td:nth-child(2) {
+    padding-right: 44px;
+    margin-bottom: 8px;
+  }
+
+  /* Las tres cifras, en fila y con su rótulo delante: sin cabecera de tabla, un
+     número suelto no dice si son puzles o minutos. */
+  .rank-table td[data-label] {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    margin-right: 14px;
+    font-size: 0.76rem;
+  }
+
+  .rank-table td[data-label]::before {
+    content: attr(data-label);
+    font-size: 0.54rem;
+    letter-spacing: 0.1em;
+    color: var(--text-faint);
+  }
+
+  /* Con fichas ya no hay nada que desplazar. */
+  .rank-scroll {
+    overflow-x: visible;
+  }
 }

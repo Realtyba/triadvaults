@@ -3,6 +3,7 @@ import { PostFX } from './PostFX.js';
 import { quality } from './QualitySettings.js';
 import { setMaxAnisotropy, disposeTextureCache } from './textures.js';
 import { disposeSharedGeometry } from '../procedural/DungeonGen.js';
+import { isHandheld, watchViewport } from './device.js';
 
 /** Color de fondo y niebla por defecto, hasta que un nivel imponga su tema. */
 const DEFAULT_ATMOSPHERE = { bg: 0x060812, fogDensity: 0.035 };
@@ -20,7 +21,11 @@ export class EngineRenderer {
 
     this.postFX = null;
 
-    window.addEventListener('resize', () => this.onResize());
+    // Con freno y agrupando la rotación: en un móvil la barra de URL que se contrae
+    // al desplazarse emite `resize` en ráfaga, y cada uno reasigna **todos** los
+    // búferes intermedios del post-procesado. De ahí salían los tirones al empezar
+    // a moverse. Ver `device.watchViewport`.
+    this.unwatchViewport = watchViewport(({ width, height }) => this.onResize(width, height));
     this.unsubscribeQuality = quality.subscribe(() => this.applyQuality());
   }
 
@@ -35,21 +40,32 @@ export class EngineRenderer {
    */
   createRenderer() {
     try {
+      const handheld = isHandheld();
+
       const renderer = new THREE.WebGLRenderer({
         antialias: quality.get('antialias'),
-        powerPreference: 'high-performance'
+        // Pedir el perfil de máximo rendimiento en un aparato de mano solo adelanta
+        // el momento en que el sistema lo baja por temperatura, y a partir de ahí va
+        // peor que si no se hubiera pedido nada.
+        powerPreference: handheld ? 'default' : 'high-performance',
+        // No se usa plantilla en ningún pase: reservarla es memoria de búfer
+        // desperdiciada, que es justo lo escaso en un móvil.
+        stencil: false
       });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(this.targetPixelRatio());
       renderer.shadowMap.enabled = quality.get('shadows');
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      // El filtrado suave es el más caro de los tres. En los presets sin
+      // post-procesado la diferencia no se aprecia y el mapa de sombras es pequeño.
+      renderer.shadowMap.type = quality.get('postprocessing') ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
 
       // Solo aquí se sabe cuántas muestras admite la GPU real. Las texturas se
       // creaban con un 4 fijo y, al quedar cacheadas, ese valor ya no cambiaba
       // nunca: el suelo hormigueaba igual en todos los presets.
-      setMaxAnisotropy(renderer.capabilities.getMaxAnisotropy());
+      this.maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+      setMaxAnisotropy(this.targetAnisotropy());
 
       return renderer;
     } catch (err) {
@@ -61,6 +77,11 @@ export class EngineRenderer {
   /** El preset acota el ratio, pero nunca por encima del que pide la pantalla. */
   targetPixelRatio() {
     return Math.min(window.devicePixelRatio, quality.get('pixelRatio'));
+  }
+
+  /** Igual que el ratio: lo acota el preset, con el techo de lo que admita la GPU. */
+  targetAnisotropy() {
+    return Math.min(this.maxAnisotropy || 1, quality.get('anisotropy'));
   }
 
   /**
@@ -99,19 +120,20 @@ export class EngineRenderer {
     if (!this.renderer) return;
     this.renderer.setPixelRatio(this.targetPixelRatio());
     this.renderer.shadowMap.enabled = quality.get('shadows');
+    setMaxAnisotropy(this.targetAnisotropy());
     // `antialias` es un parámetro de creación del contexto: cambiarlo exigiría
     // recrear el renderer y perder la escena. El preset compensa con SMAA.
   }
 
-  onResize() {
+  onResize(width = window.innerWidth, height = window.innerHeight) {
     if (this.renderer) {
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this.renderer.setSize(width, height);
       this.renderer.setPixelRatio(this.targetPixelRatio());
       // El composer tiene sus propios render targets: sin esto la imagen se
       // quedaba estirada al cambiar el tamaño de la ventana.
-      if (this.postFX) this.postFX.setSize(window.innerWidth, window.innerHeight);
+      if (this.postFX) this.postFX.setSize(width, height);
     }
-    if (this.onResizeCallback) this.onResizeCallback(window.innerWidth, window.innerHeight);
+    if (this.onResizeCallback) this.onResizeCallback(width, height);
   }
 
   render(camera, delta = 0) {
@@ -122,6 +144,7 @@ export class EngineRenderer {
 
   destroy() {
     if (this.postFX) this.postFX.destroy();
+    if (this.unwatchViewport) this.unwatchViewport();
     if (this.unsubscribeQuality) this.unsubscribeQuality();
     if (this.renderer) this.renderer.dispose();
 

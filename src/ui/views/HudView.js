@@ -20,7 +20,8 @@ export class HudView {
     'puzzleProgress',
     'puzzleSolved',
     'elapsedTime',
-    'hasGamepad',
+    'inputMode',
+    'isTouch',
     'lang'
   ];
 
@@ -60,7 +61,7 @@ export class HudView {
         <div class="hud-objective__tag">${this.t('objective_title')}</div>
         <div class="hud-objective__desc" data-ref="objective"></div>
         <div class="bar"><div class="bar__fill bar__fill--progress" data-ref="progressFill"></div></div>
-        <div class="hud-objective__hint">${this.t('camera_hint')}</div>
+        <div class="hud-objective__hint" data-ref="hint">${this.t('camera_hint')}</div>
       </div>
 
       <div class="hud-timer glass-panel">
@@ -85,6 +86,7 @@ export class HudView {
       healthGhost: ref('healthGhost'),
       healthPanel: ref('healthPanel'),
       objective: ref('objective'),
+      hint: ref('hint'),
       progressFill: ref('progressFill'),
       timer: ref('timer'),
       inputMode: ref('inputMode'),
@@ -106,7 +108,8 @@ export class HudView {
 
     this.renderHealth(state.health);
     this.renderTimer(state.elapsedTime || 0);
-    this.renderInputMode(state.hasGamepad);
+    this.renderInputMode(state.inputMode);
+    this.renderHint(state.inputMode);
 
     if (this.refs.objective.textContent !== state.objectiveText) {
       this.refs.objective.innerHTML = esc(state.objectiveText);
@@ -122,15 +125,21 @@ export class HudView {
     setText(this.refs.timer, `${m}:${s}`);
   }
 
-  renderInputMode(hasGamepad) {
+  renderInputMode(mode = 'keyboard') {
     if (!this.refs.inputMode) return;
-    const iconName = hasGamepad ? 'gamepad' : 'keyboard';
-    const label = this.t(hasGamepad ? 'hud_input_gamepad' : 'hud_input_keyboard');
+    const iconName = mode === 'gamepad' ? 'gamepad' : mode === 'touch' ? 'touch' : 'keyboard';
+    const label = this.t(`hud_input_${mode}`);
     // Solo reescribe si cambió, para no animar el icono en cada frame.
     if (this.refs.inputLabel.textContent !== label) {
       this.refs.inputMode.innerHTML = `${icon(iconName, { size: 14 })}<span data-ref="inputLabel">${label}</span>`;
       this.refs.inputLabel = this.refs.inputMode.querySelector('[data-ref="inputLabel"]');
     }
+  }
+
+  /** La pista habla de la rueda del ratón, que en un táctil no existe. */
+  renderHint(mode = 'keyboard') {
+    if (!this.refs.hint) return;
+    setText(this.refs.hint, this.t(mode === 'touch' ? 'camera_hint_touch' : 'camera_hint'));
   }
 
   /**

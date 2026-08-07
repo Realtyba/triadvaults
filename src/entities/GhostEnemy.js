@@ -85,6 +85,8 @@ export class GhostEnemyEntity {
     this.coreMesh.castShadow = quality.get('shadows');
     this.mesh.add(this.coreMesh);
 
+    this.buildOutline();
+    this.buildGroundMark();
     this.buildShroud();
     this.buildEyes();
 
@@ -93,6 +95,68 @@ export class GhostEnemyEntity {
     this.light.position.set(0, 1.7, 0);
     this.baseLightIntensity = 1.4;
     this.mesh.add(this.light);
+  }
+
+  /**
+   * Borde de la criatura, por casco invertido.
+   *
+   * ## Por qué hace falta
+   *
+   * La estética de más abajo funciona **mientras haya bloom**: lo único luminoso
+   * son los ojos y son ellos los que lo recogen. En el preset bajo no hay
+   * post-procesado *ni* mortaja, así que del fantasma solo quedaba un icosaedro casi
+   * negro sobre suelo oscuro: invisible hasta que ya te había alcanzado. Y el preset
+   * bajo es exactamente el que le toca a cualquier móvil.
+   *
+   * ## Cómo
+   *
+   * Una copia del núcleo ligeramente mayor, pintada por su **cara interior**: el
+   * núcleo tapa todo menos el reborde. El material es sin iluminación, así que no
+   * depende de luces, sombras ni post-procesado y se ve igual en los cuatro presets.
+   * Cuesta una llamada de dibujo.
+   *
+   * El color es el rojo de amenaza y **no** el del agente perseguido: los ojos ya
+   * dicen a por quién va (ver `setTargetIndicator`), y que las dos señales digan lo
+   * mismo desperdicia una de las dos. El borde responde a "hay un fantasma ahí".
+   */
+  buildOutline() {
+    this.outlineMat = new THREE.MeshBasicMaterial({
+      color: PALETTE.GHOST_AURA,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0.5,
+      // Sin escritura de profundidad la mortaja no se recorta contra el borde.
+      depthWrite: false
+    });
+
+    this.outlineMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55, 1), this.outlineMat);
+    this.outlineMesh.scale.setScalar(1.13);
+    this.outlineMesh.position.y = 1.6;
+    this.mesh.add(this.outlineMesh);
+  }
+
+  /**
+   * Anillo en el suelo, bajo la criatura.
+   *
+   * Con una cámara isométrica en picado, la altura se lee mal: el cuerpo flota a
+   * 1,6 unidades y el ojo no acierta a qué casilla corresponde. El anillo dice
+   * **dónde** está, y aparece por el borde de la pantalla antes que el propio
+   * fantasma, que es justo el aviso que faltaba.
+   */
+  buildGroundMark() {
+    this.markMat = new THREE.MeshBasicMaterial({
+      color: PALETTE.GHOST_AURA,
+      transparent: true,
+      opacity: 0.28,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+
+    this.groundMark = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.76, 28), this.markMat);
+    this.groundMark.rotation.x = -Math.PI / 2;
+    // Despegado del suelo para que no parpadee por competir con él en profundidad.
+    this.groundMark.position.y = 0.06;
+    this.mesh.add(this.groundMark);
   }
 
   /**
@@ -141,7 +205,9 @@ export class GhostEnemyEntity {
    * el anillo de alambre: saber a por quién va sin mirar el HUD.
    */
   buildEyes() {
-    const geometry = new THREE.SphereGeometry(0.075, 8, 8);
+    // Un poco mayores que antes: a 0.075 solo se distinguían gracias al bloom, y en
+    // los presets que no lo tienen desaparecían por completo.
+    const geometry = new THREE.SphereGeometry(0.095, 8, 8);
     this.eyeMat = new THREE.MeshBasicMaterial({ color: PALETTE.GHOST_AURA });
 
     this.eyes = [-1, 1].map(side => {
@@ -225,6 +291,25 @@ export class GhostEnemyEntity {
     this.coreMesh.position.y = 1.6 + Math.sin(this.elapsed * 2) * 0.18;
     this.coreMesh.rotation.y += delta * 0.35;
 
+    const closeness = clamp01(1 - this.distanceToTarget / 14);
+
+    // El borde acompaña al cuerpo en el vaivén y en el giro: separarlo aunque sea
+    // un fotograma lo delata como una segunda malla en vez de como un contorno.
+    if (this.outlineMesh) {
+      this.outlineMesh.position.y = this.coreMesh.position.y;
+      this.outlineMesh.rotation.y = this.coreMesh.rotation.y;
+      // Marca más cuanto más cerca está, igual que late la luz: así el recurso de
+      // legibilidad trabaja a favor de la tensión en vez de aplanarla.
+      this.outlineMat.opacity = 0.42 + closeness * 0.34;
+    }
+
+    if (this.groundMark) {
+      const beat = pulse(this.elapsed, 2 + closeness * 4);
+      this.markMat.opacity = 0.2 + closeness * 0.28 + beat * 0.08;
+      const scale = 1 + beat * 0.08;
+      this.groundMark.scale.set(scale, scale, 1);
+    }
+
     // La mortaja ondea: cada jirón con su fase, o los seis laten a la vez y se lee
     // como un objeto rígido que se hincha.
     this.shroud.forEach(strip => {
@@ -236,7 +321,6 @@ export class GhostEnemyEntity {
 
     // La luz respira, más deprisa cuanto más cerca está de su presa.
     if (this.light) {
-      const closeness = clamp01(1 - this.distanceToTarget / 14);
       const beat = pulse(this.elapsed, 2 + closeness * 6);
       this.light.intensity = this.baseLightIntensity * (0.6 + beat * 0.5 + closeness * 0.5);
     }

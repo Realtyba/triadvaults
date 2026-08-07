@@ -196,20 +196,22 @@ export const MODALS = {
     `
   }),
 
+  // Explicar W A S D y la rueda del ratón a quien está jugando con el dedo no es un
+  // detalle cosmético: son las dos únicas tarjetas que enseñan a manejar el juego.
   instructions: (state, { t }) => ({
     title: t('instructions_title'),
     className: 'modal--doc',
     body: `
       <div class="inst-grid">
         <div class="inst-card">
-          <div class="inst-card__icon">${icon('bolt', { size: 20 })}</div>
+          <div class="inst-card__icon">${icon(state.isTouch ? 'touch' : 'bolt', { size: 20 })}</div>
           <div class="inst-card__title">${t('inst_title_movement')}</div>
-          <div class="inst-card__desc">${t('inst_desc_movement')}</div>
+          <div class="inst-card__desc">${t(state.isTouch ? 'inst_desc_movement_touch' : 'inst_desc_movement')}</div>
         </div>
         <div class="inst-card">
           <div class="inst-card__icon">${icon('hint', { size: 20 })}</div>
           <div class="inst-card__title">${t('inst_title_camera')}</div>
-          <div class="inst-card__desc">${t('inst_desc_camera')}</div>
+          <div class="inst-card__desc">${t(state.isTouch ? 'inst_desc_camera_touch' : 'inst_desc_camera')}</div>
         </div>
         <div class="inst-card">
           <div class="inst-card__icon">${icon('puzzle', { size: 20 })}</div>

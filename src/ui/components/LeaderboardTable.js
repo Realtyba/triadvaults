@@ -55,26 +55,32 @@ export function renderLeaderboard(entries, currentUsername, t, sort = 'level') {
             <span class="rank-name">${esc(entry.firstName)} ${esc(entry.lastName)}</span>
             <span class="rank-user">@${esc(entry.username)}</span>
           </td>
-          <td class="num">${esc(entry.maxLevelReached)}</td>
-          <td class="num">${esc(entry.totalPuzzlesSolved)}</td>
-          <td class="num">${formatDuration(entry.totalTimePlayed)}</td>
+          <td class="num" data-label="${t('level')}">${esc(entry.maxLevelReached)}</td>
+          <td class="num" data-label="${t('rank_puzzles')}">${esc(entry.totalPuzzlesSolved)}</td>
+          <td class="num" data-label="${t('rank_time')}">${formatDuration(entry.totalTimePlayed)}</td>
         </tr>
       `;
     })
     .join('');
 
+  // Cinco columnas no caben en un móvil por mucho que se encoja la tipografía. En
+  // pantalla estrecha el CSS convierte cada fila en una ficha, y los `data-label`
+  // de arriba son los que le devuelven a cada cifra el rótulo que perdió al
+  // desaparecer la cabecera. El envoltorio cubre los anchos intermedios.
   return `
-    <table class="rank-table">
-      <thead>
-        <tr>
-          <th>${t('rank_position')}</th>
-          <th>${t('rank_agent')}</th>
-          ${header('level', t('level'), sort)}
-          ${header('puzzles', t('rank_puzzles'), sort)}
-          ${header('time', t('rank_time'), sort)}
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div class="rank-scroll">
+      <table class="rank-table">
+        <thead>
+          <tr>
+            <th>${t('rank_position')}</th>
+            <th>${t('rank_agent')}</th>
+            ${header('level', t('level'), sort)}
+            ${header('puzzles', t('rank_puzzles'), sort)}
+            ${header('time', t('rank_time'), sort)}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
   `;
 }

@@ -16,7 +16,7 @@ export class RoomController {
   }
 
   create() {
-    if (!this.checkVerification()) return;
+    if (!this.ui.requireVerifiedAccount()) return;
 
     this.socket.createRoom(res => {
       if (res && res.success) this.enterLobby(res.room);
@@ -26,14 +26,14 @@ export class RoomController {
 
   joinByCode() {
     // La verificación la comprueba `join`, que es donde acaba este camino: hacerlo
-    // aquí también abría dos veces el mismo modal.
+    // aquí también abriría dos veces el mismo modal.
     const code = this.form.get('roomCode').trim().toUpperCase();
     if (code.length !== CODE_LENGTH) return this.ui.alert(this.t('error_invalid_room_code'));
     this.join(code);
   }
 
   join(code) {
-    if (!this.checkVerification()) return;
+    if (!this.ui.requireVerifiedAccount()) return;
 
     this.socket.joinRoom(code, res => {
       if (!res || !res.success) {
@@ -68,7 +68,13 @@ export class RoomController {
     this.refresh();
   }
 
+  /**
+   * Se comprueba también aquí, aunque al lobby solo se llegue por `create` o `join`:
+   * cambiar el correo desde el perfil devuelve la cuenta a "sin verificar" sin
+   * echar a nadie de la sala en la que ya estaba.
+   */
   start() {
+    if (!this.ui.requireVerifiedAccount()) return;
     this.socket.startGame();
   }
 
@@ -91,12 +97,4 @@ export class RoomController {
     }
   }
 
-  checkVerification() {
-    const user = this.store.get().user;
-    if (user && user.isVerified === false) {
-      this.store.patch({ modal: 'verify' });
-      return false;
-    }
-    return true;
-  }
 }

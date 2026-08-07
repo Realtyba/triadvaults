@@ -19,6 +19,20 @@ import { PALETTE } from '../engine/materials.js';
 const MOVE_SEND_HZ = 20;
 const GHOST_SEND_HZ = 15;
 
+/**
+ * Tope de fotogramas.
+ *
+ * Sin él el bucle pinta a la frecuencia del panel, y los móviles de 120 Hz —cada vez
+ * más comunes— hacían el doble de trabajo de GPU para una diferencia que en una
+ * cámara isométrica no se aprecia. Lo que sí se notaba era el calor y la bajada por
+ * temperatura a los pocos minutos.
+ *
+ * El margen evita que un fotograma llegado un pelo antes de tiempo se descarte y
+ * convierta 60 estables en 30 a saltos.
+ */
+const FRAME_BUDGET_MS = 1000 / 60;
+const FRAME_TOLERANCE_MS = 2;
+
 export class GameApp {
   constructor(container) {
     this.renderer = new EngineRenderer(container);
@@ -38,6 +52,10 @@ export class GameApp {
     this.bridge = new NetworkBridge({ socket: this.socket, game: this, ui: this.ui });
 
     this.clock = new THREE.Clock();
+    // Se guarda una sola función en vez de crear un cierre nuevo en cada fotograma,
+    // y así `requestAnimationFrame` puede pasarnos su marca de tiempo.
+    this.boundAnimate = timestamp => this.animate(timestamp);
+    this.lastFrameTime = -Infinity;
     this.running = false;
     this.deathCount = 0;
     this.lastPuzzleSolved = false;
@@ -55,6 +73,10 @@ export class GameApp {
     this.renderer.onResizeCallback = (w, h) => this.camera.updateAspect(w, h);
     this.input.onGamepadAction = action => this.onGamepadAction(action);
     this.input.gamepad.onConnectionChange = name => this.ui.setGamepad(name);
+    this.input.touch.onConnectionChange = () => this.ui.setTouchActive();
+    // El pellizco escribe en el mismo zoom objetivo que la rueda del ratón.
+    this.input.touch.onPinch = amount => this.camera.zoomBy(amount);
+    document.addEventListener('visibilitychange', () => this.onVisibilityChange());
     this.bridge.register();
 
     if (!this.renderer.isAvailable) this.ui.alert(this.ui.ctx.t('error_no_webgl'));
@@ -94,6 +116,9 @@ export class GameApp {
     this.renderer.setAtmosphere({ bg: theme.bg, color: theme.color, fogDensity: theme.fogDensity });
     this.particles.setupAmbient(this.level.info.sizeX, this.level.info.sizeZ, theme.color);
     this.camera.reset();
+    // La cámara encuadra la sala de este nivel, no la mayor que el juego puede
+    // generar: sin la medida real, un nivel pequeño se veía desde demasiado lejos.
+    this.camera.setRoomExtent(Math.max(this.level.info.sizeX, this.level.info.sizeZ));
 
     if (room) {
       this.players.sync(room.players, this.socket.uid, index => this.level.spawnFor(index));
@@ -133,6 +158,9 @@ export class GameApp {
     this.players.clear();
     this.particles.clearAmbient();
     this.sound.stopBGM();
+    // La sala decorativa del menú tiene su propio encuadre; arrastrar el del último
+    // nivel jugado dejaba el menú visto desde otra distancia cada vez.
+    this.camera.setRoomExtent(null);
 
     // Volver al menú devuelve la escena decorativa: sin ella se quedaba una
     // pantalla negra detrás de la interfaz.
@@ -242,8 +270,18 @@ export class GameApp {
 
   // ------------------------------------------------------------- el bucle
 
-  animate() {
-    requestAnimationFrame(() => this.animate());
+  animate(now = 0) {
+    requestAnimationFrame(this.boundAnimate);
+
+    // Con la pestaña oculta el navegador ya frena el bucle, pero no de forma
+    // uniforme: en un móvil en segundo plano o a pantalla partida sigue llamando.
+    // Salir aquí es lo que impide seguir gastando batería sobre una escena que
+    // nadie ve. El reloj se descarta al volver, en `onVisibilityChange`.
+    if (document.hidden) return;
+
+    if (now - this.lastFrameTime < FRAME_BUDGET_MS - FRAME_TOLERANCE_MS) return;
+    this.lastFrameTime = now;
+
     const delta = Math.min(this.clock.getDelta(), 0.1);
 
     // El mando se lee siempre, no solo cuando se simula: en pausa hace falta para
@@ -273,6 +311,26 @@ export class GameApp {
     else if (action === 'respawn' && this.players.local && !this.players.local.alive) {
       this.ui.requestRespawn();
     }
+  }
+
+  /**
+   * La pestaña pasa a segundo plano o vuelve.
+   *
+   * Al volver se descarta el tiempo acumulado leyendo el reloj y tirando el
+   * resultado: sin eso, el primer fotograma llegaría con el delta de todo el rato
+   * que el juego estuvo oculto. El recorte a 0,1 s del bucle lo contendría, pero
+   * seguiría siendo un salto de dos segundos y medio de movimiento en un fotograma.
+   */
+  onVisibilityChange() {
+    const audio = this.sound.audioCtx;
+    if (document.hidden) {
+      audio?.suspend?.();
+      return;
+    }
+
+    this.clock.getDelta();
+    this.lastFrameTime = -Infinity;
+    audio?.resume?.();
   }
 
   /** Sin conexión no se simula: antes el juego seguía corriendo contra el vacío. */
@@ -310,7 +368,7 @@ export class GameApp {
 
     this.ui.store.patch({
       elapsedTime: this.level.elapsedSeconds,
-      hasGamepad: this.input.hasGamepad
+      inputMode: this.input.mode
     });
   }
 

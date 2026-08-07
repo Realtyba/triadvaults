@@ -53,7 +53,7 @@ export class MainMenuView {
         <!-- Siempre visible, con y sin sesión: es la vía de entrada para quien no
              tiene cuenta, o la tiene pero no hay servidor al que conectarse. -->
         <div class="offline-entry">
-          <button class="btn btn-outline btn-block" data-action="game:offline">
+          <button class="btn btn-outline btn-block" data-action="game:offline" data-region="offline-btn">
             ${icon('bolt')} <span>${this.t('btn_play_offline')}</span>
           </button>
           <p class="offline-entry__hint" data-region="offline-hint">${this.t('offline_hint')}</p>
@@ -110,12 +110,20 @@ export class MainMenuView {
       if (label) label.textContent = this.t(offline ? 'server_offline' : 'server_online');
     }
 
+    // Una cuenta sin verificar no juega, tampoco sin conexión. Se deshabilita el
+    // botón en vez de esconderlo: si desaparece, la salida —cerrar sesión— no se
+    // deduce de ninguna parte de la pantalla.
+    const blocked = authenticated && state.user.isVerified === false;
+    const offlineBtn = this.root.querySelector('[data-region="offline-btn"]');
+    if (offlineBtn) offlineBtn.disabled = blocked;
+
     // Lo jugado sin red que aún no ha llegado al servidor: si el jugador no ve que
     // hay algo pendiente, un progreso que tarda en aparecer parece progreso perdido.
     const hint = this.root.querySelector('[data-region="offline-hint"]');
     if (hint) {
-      hint.textContent =
-        state.offlinePending > 0
+      hint.textContent = blocked
+        ? this.t('offline_needs_verification')
+        : state.offlinePending > 0
           ? this.t('offline_pending').replace('{0}', state.offlinePending)
           : this.t('offline_hint');
     }

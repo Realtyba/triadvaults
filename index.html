@@ -2,7 +2,14 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- `viewport-fit=cover` deja pintar bajo el notch y la barra de gestos; lo que
+       no debe quedar debajo se aparta con `env(safe-area-inset-*)` desde el CSS.
+       El zoom se desactiva porque un doble toque accidental durante una huida
+       ampliaba la pantalla y no había forma cómoda de volver. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Triad Vaults — Procedural Cyberpunk Co-op Escape</title>
   <meta name="description" content="Triad Vaults: un juego cooperativo de escape procedural para 1-3 jugadores. Resuelve acertijos, evita al fantasma y escapa de bóvedas generadas algorítmicamente.">
   <meta name="theme-color" content="#060812">

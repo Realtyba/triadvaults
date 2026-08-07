@@ -1,5 +1,13 @@
 FROM node:22-alpine AS build
 
+# Horneadas en el bundle del cliente por vite.config.js (loadEnv). Coolify las pasa
+# como --build-arg cuando se marcan "Build Variable"; sin declararlas aquí como ARG,
+# `vite build` no las vería aunque Coolify las mande.
+ARG TRIADVAULTS_API_URL
+ARG VITE_SOCKET_URL
+ENV TRIADVAULTS_API_URL=${TRIADVAULTS_API_URL}
+ENV VITE_SOCKET_URL=${VITE_SOCKET_URL}
+
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.1.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./

@@ -4,19 +4,22 @@ Este servidor solo coordina salas en tiempo real. Las cuentas, el progreso y los
 los sirve `realtyba-api` (Laravel), que es quien habla con PostgreSQL. Aquí no hay base
 de datos que crear ni migraciones que correr para el juego en sí.
 
-El `Dockerfile` y el `docker-compose.yml` del repo ya están preparados para desplegarse
-como recurso **"Docker Compose"** de Coolify: sin `ports:` publicado al host, sin
-`container_name` fijo y sin `env_file` — Coolify inyecta las variables desde su panel y
-enruta por su Traefik interno. No hay que tocar ninguno de los dos ficheros.
+El recurso en Coolify es de tipo **Dockerfile** (no "Docker Compose"): Coolify construye
+directo desde el [`Dockerfile`](../Dockerfile) del repo y la red/dominio se configuran
+por su UI. El [`docker-compose.yml`](../docker-compose.yml) del repo existe para `docker
+compose up` en local o para un futuro recurso tipo Docker Compose, pero **este recurso
+de Coolify lo ignora por completo** — nada de lo que digas ahí (`expose`, variables,
+logging) aplica al despliegue. Toda la config real vive en las pestañas de Coolify que
+describen las secciones 2 a 4.
 
 ---
 
 ## Índice
 
 1. [DNS de triadvaults.com](#1-dns-de-triadvaultscom)
-2. [Crear el recurso en Coolify](#2-crear-el-recurso-en-coolify)
-3. [Variables de entorno](#3-variables-de-entorno)
-4. [Dominio y SSL](#4-dominio-y-ssl)
+2. [Configuración General del recurso](#2-configuración-general-del-recurso)
+3. [Network: el puerto](#3-network-el-puerto)
+4. [Variables de entorno](#4-variables-de-entorno)
 5. [Deploy y verificación](#5-deploy-y-verificación)
 6. [Actualizar el juego](#6-actualizar-el-juego)
 7. [Troubleshooting](#7-troubleshooting)
@@ -25,17 +28,15 @@ enruta por su Traefik interno. No hay que tocar ninguno de los dos ficheros.
 
 ## 1. DNS de triadvaults.com
 
-En el panel DNS de `triadvaults.com`, apunta el dominio (o el subdominio que vayas a
-usar) a la IP del VPS con un registro **A**:
+En el panel DNS de `triadvaults.com`, un registro **A** apuntando a la IP del VPS
+(apex `@` o `www`, según lo que hayas puesto en el paso 2):
 
 ```
 Tipo: A
-Nombre: @              (apex: triadvaults.com)  — o "www" si prefieres www.triadvaults.com
+Nombre: @  (o www)
 Valor: TU_IP_DEL_VPS
 TTL:   300
 ```
-
-Comprueba que propagó antes de seguir:
 
 ```bash
 dig triadvaults.com +short
@@ -44,19 +45,42 @@ dig triadvaults.com +short
 
 ---
 
-## 2. Crear el recurso en Coolify
+## 2. Configuración General del recurso
 
-En el panel de Coolify: **New Resource → Docker Compose**, apuntando al repo de `game`
-(GitHub/GitLab, con deploy key si es privado) y a la rama a desplegar (normalmente
-`main`). Coolify lee el `docker-compose.yml` de la raíz directamente — no hace falta
-clonar nada a mano en el VPS.
+Pestaña **Configuration → General**:
+
+| Campo | Valor |
+|---|---|
+| Build Pack | `Dockerfile` |
+| Domains | `https://www.triadvaults.com` (o el dominio que hayas apuntado) |
+| Direction | `Allow www & non-www` (o la que prefieras — Coolify redirige según esta opción) |
+| Base Directory | `/` |
+| Dockerfile Location | `/Dockerfile` |
+
+Coolify genera solo los labels de Traefik (routers, entrypoints, redirect a HTTPS) a
+partir del dominio que pongas aquí — no hay que tocarlos a mano.
 
 ---
 
-## 3. Variables de entorno
+## 3. Network: el puerto
 
-Se cargan en la pestaña **Environment Variables** del recurso, una a una. No se sube
-ningún `.env` al VPS.
+Misma pestaña, sección **Network**:
+
+| Campo | Valor | Por qué |
+|---|---|---|
+| Ports Exposes | `3001` | el puerto real donde escucha el servidor (`EXPOSE 3001` en el `Dockerfile`, `PORT=3001`) |
+| Port Mappings | *(vacío)* | no publiques el puerto directo al host — Traefik es el único que debe entrar, igual que con SSL |
+
+**Este es el campo que más falla por descuido.** Coolify trae `3000` como placeholder
+en "Ports Exposes"; si lo dejas así, el build sale en verde pero Traefik enruta a un
+puerto donde no hay nada escuchando y el sitio no responde. Cambialo a `3001` antes del
+primer deploy.
+
+---
+
+## 4. Variables de entorno
+
+Pestaña **Environment Variables**, una a una — no se sube ningún `.env` al VPS.
 
 | Variable | Valor | Build-time |
 |---|---|---|
@@ -67,11 +91,11 @@ ningún `.env` al VPS.
 | `TRIADVAULTS_JWT_SECRET` | igual que en el `.env` de `realtyba-api` | no |
 | `VITE_SOCKET_URL` | `https://triadvaults.com` (el dominio del propio juego) | **sí** |
 
-Las dos marcadas **"sí"** hay que activarlas con el checkbox *"Available at
-Buildtime"* junto a cada variable. El build de Vite las hornea en el bundle del cliente
-en el momento de construir la imagen (`vite.config.js` las lee de un `.env` físico en el
-contexto de build); si solo quedan inyectadas en el contenedor ya arrancado, el bundle
-sale con esas URLs vacías y el healthcheck sigue en verde mientras nadie puede jugar.
+Las dos marcadas **"sí"** hay que activarlas con el toggle de build-time de esa
+variable. El build de Vite las hornea en el bundle del cliente en el momento de
+construir la imagen (`vite.config.js` las lee de un `.env` físico en el contexto de
+build); si solo quedan inyectadas en el contenedor ya arrancado, el bundle sale con esas
+URLs vacías y el healthcheck sigue en verde mientras nadie puede jugar.
 
 `TRIADVAULTS_INTERNAL_SECRET` y `TRIADVAULTS_JWT_SECRET` son **secretos compartidos**:
 tienen que valer exactamente lo mismo que en el `.env` de `realtyba-api`. No los generes
@@ -92,24 +116,16 @@ una vez sin riesgo.
 
 ---
 
-## 4. Dominio y SSL
-
-En la pestaña **Domains** del servicio `app`, escribe `triadvaults.com` (o
-`www.triadvaults.com`, lo que hayas apuntado en el paso 1) y el puerto `3001`. Coolify
-pide el certificado Let's Encrypt automáticamente en el primer deploy — el DNS tiene que
-haber propagado ya — y lo renueva solo. Su Traefik ya escucha en los puertos 80 y 443
-del VPS.
-
----
-
 ## 5. Deploy y verificación
 
-Dispara el primer deploy con el botón **Deploy** del panel. Cuando termine:
+Botón **Deploy** del panel. Cuando termine:
 
 ```bash
 curl https://triadvaults.com/health
 # {"success":true,"service":"triadvaults-rooms","uptime":...,"api":true}
 ```
+
+Si da timeout o 502 con el build en verde, revisa primero el paso 3 (Ports Exposes).
 
 Abre `https://triadvaults.com` en el navegador y comprueba:
 
@@ -123,13 +139,18 @@ Abre `https://triadvaults.com` en el navegador y comprueba:
 
 ## 6. Actualizar el juego
 
-No hace falta `git pull` ni `docker compose` a mano en el VPS. Conecta el webhook del
-repo (pestaña **Webhooks** del recurso) para que cada push a la rama seguida dispare un
-redeploy automático, o usa el botón **Redeploy** del panel para hacerlo manualmente.
+No hace falta `git pull` ni nada a mano en el VPS. Conecta el webhook del repo
+(pestaña **Webhooks** del recurso) para que cada push a la rama seguida dispare un
+redeploy automático, o usa el botón **Redeploy** del panel.
 
 ---
 
 ## 7. Troubleshooting
+
+### El build sale en verde pero el sitio no responde (timeout / 502)
+
+**Causa casi segura:** "Ports Exposes" se quedó en el `3000` por defecto en vez de
+`3001` (paso 3). Traefik enruta al puerto donde no escucha nada.
 
 ### El healthcheck está en verde pero nadie puede jugar
 
@@ -137,13 +158,13 @@ redeploy automático, o usa el botón **Redeploy** del panel para hacerlo manual
 intenta conectar a `localhost` o a una URL vacía, y las llamadas a la API fallan.
 
 **Causa:** `TRIADVAULTS_API_URL` y/o `VITE_SOCKET_URL` no están marcadas como
-*"Available at Buildtime"* (paso 3). **Solución:** márcalas y vuelve a desplegar — no
-basta con reiniciar el contenedor, hay que reconstruir la imagen.
+build-time (paso 4). **Solución:** márcalas y vuelve a desplegar — no basta con
+reiniciar el contenedor, hay que reconstruir la imagen.
 
 ### El contenedor no alcanza la API de cuentas
 
 `api: true` en el healthcheck solo dice que la variable está puesta, no que la API
-responda. Compruébalo desde dentro del contenedor (en Coolify, terminal del recurso):
+responda. Compruébalo desde la terminal del recurso en Coolify:
 
 ```bash
 wget -qO- $TRIADVAULTS_API_URL/api/triadvaults/health

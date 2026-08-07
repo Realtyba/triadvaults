@@ -1,9 +1,17 @@
-# Triad Vaults — Despliegue en VPS (Docker + Nginx + SSL)
+# Triad Vaults — Despliegue en VPS (Docker + Coolify)
 
 Guía paso a paso para montar Triad Vaults en un VPS con Ubuntu. La aplicación
 corre dentro de un contenedor Docker, aislada del resto de servicios del servidor.
 Este servidor solo coordina salas: las cuentas, el progreso y los logros los sirve
 `realtyba-api`, que es quien habla con PostgreSQL.
+
+> **Coolify es la ruta principal de esta guía.** El `Dockerfile` y el
+> `docker-compose.yml` del repo ya están preparados para desplegarse como recurso
+> "Docker Compose" de Coolify: sin `ports:` publicado al host, sin `container_name`
+> fijo y sin `env_file`, porque Coolify inyecta las variables y enruta por la red
+> interna de Docker con su propio Traefik. Si en cambio vas a montarlo a mano con
+> Nginx + Certbot (sin Coolify), la sección 8 trae al final las dos líneas que hay
+> que devolver al `docker-compose.yml` para ese caso.
 
 ---
 
@@ -12,17 +20,16 @@ Este servidor solo coordina salas: las cuentas, el progreso y los logros los sir
 1. [Requisitos](#1-requisitos)
 2. [Preparar el subdominio](#2-preparar-el-subdominio)
 3. [Clonar el proyecto](#3-clonar-el-proyecto)
-4. [Configurar `.env` de producción](#4-configurar-env-de-producción)
+4. [Configurar las variables de producción](#4-configurar-las-variables-de-producción)
 5. [Base de datos](#5-base-de-datos)
 6. [Dockerfile y docker-compose](#6-dockerfile-y-docker-compose)
 7. [Construir y levantar el contenedor](#7-construir-y-levantar-el-contenedor)
-8. [Configurar Nginx como reverse proxy](#8-configurar-nginx-como-reverse-proxy)
-9. [SSL con Let's Encrypt (Certbot)](#9-ssl-con-lets-encrypt-certbot)
-10. [Verificar que todo funciona](#10-verificar-que-todo-funciona)
-11. [Mantenimiento](#11-mantenimiento)
-12. [Actualizar el juego](#12-actualizar-el-juego)
-13. [Backups](#13-backups)
-14. [Troubleshooting](#14-troubleshooting)
+8. [Dominio y SSL](#8-dominio-y-ssl)
+9. [Verificar que todo funciona](#9-verificar-que-todo-funciona)
+10. [Mantenimiento](#10-mantenimiento)
+11. [Actualizar el juego](#11-actualizar-el-juego)
+12. [Backups](#12-backups)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -84,9 +91,23 @@ cd triad-vaults
 
 ---
 
-## 4. Configurar `.env` de producción
+## 4. Configurar las variables de producción
 
-Copia el ejemplo y edítalo:
+**Con Coolify no se sube ni se edita ningún `.env` al VPS.** Las variables se
+cargan una a una en la pestaña *Environment Variables* del recurso, en el panel
+de Coolify. La lista de abajo es la misma en ambos casos; solo cambia dónde vive.
+
+Además, marca `TRIADVAULTS_API_URL` y `VITE_SOCKET_URL` como **"Available at
+Buildtime" / "Build Variable"** en Coolify (checkbox junto a cada variable). El
+build de Vite (`pnpm exec vite build`, dentro del `Dockerfile`) lee estas dos de
+un `.env` físico en el momento de construir la imagen —vía `loadEnv()` en
+[`vite.config.js`](../vite.config.js)—, no del entorno del contenedor ya
+arrancado. Si no las marcas como build-time, la imagen se construye con la URL
+de la API y la del socket **vacías**: el healthcheck sigue en verde y nadie
+puede jugar, con la misma pinta engañosa que el aviso del final de esta sección.
+
+> Si en vez de Coolify vas a levantar el contenedor a mano (ver alternativa al
+> final de la sección 8), sí necesitas un `.env` real en la raíz del proyecto:
 
 ```bash
 cp .env.example .env
@@ -165,62 +186,30 @@ con filas existentes y saltaría las nuevas en silencio.
 
 ## 6. Dockerfile y docker-compose
 
-Crea el `Dockerfile` en la raíz del proyecto:
+**Ambos ya existen en la raíz del proyecto — no hay que crearlos.** Esta sección
+documenta lo que hace cada uno, para no tocarlos a ciegas.
 
-```bash
-cat > Dockerfile << 'DOCKERFILE'
-FROM node:20-alpine AS build
+[`Dockerfile`](../Dockerfile): build en dos etapas con pnpm (no npm — el repo
+instala con pnpm, ver `pnpm-lock.yaml`). La imagen final **no** copia el `.env`
+ni la carpeta `migrations`: el esquema del juego se mudó a `realtyba-api` en la
+migración de TriadVaults, y hornear secretos dentro de una capa de la imagen es
+un riesgo si esa imagen llega a subirse a un registry. Las variables de
+producción entran por el entorno del contenedor (ver sección 4), y las de
+build-time (`TRIADVAULTS_API_URL`, `VITE_SOCKET_URL`) por un `.env` en el
+contexto de build — a mano si despliegas manual, o vía Coolify si lo marcas
+"build variable".
 
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-COPY . .
-RUN npx vite build
+[`docker-compose.yml`](../docker-compose.yml): preparado para Coolify —
 
-# --- Imagen de producción ---
-FROM node:20-alpine
-
-WORKDIR /app
-
-# Solo dependencias de producción
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-
-# El build del cliente
-COPY --from=build /app/dist ./dist
-
-# El servidor y archivos compartidos
-COPY server ./server
-COPY shared ./shared
-COPY migrations ./migrations
-COPY scripts ./scripts
-COPY .env .env
-
-EXPOSE 3001
-
-# Healthcheck interno
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:3001/health || exit 1
-
-CMD ["node", "server/index.js"]
-DOCKERFILE
-```
-
-Crea `docker-compose.yml`:
-
-```bash
-cat > docker-compose.yml << 'COMPOSE'
+```yaml
 services:
   app:
     build: .
-    container_name: triad-vaults
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    env_file:
-      - .env
     environment:
       - NODE_ENV=production
     logging:
@@ -228,29 +217,47 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-COMPOSE
 ```
 
-Crea un `.dockerignore` para que la imagen sea liviana:
+- Sin `ports:` publicado al host: Coolify enruta al contenedor por la red
+  interna de Docker a través de su Traefik. Publicar 3001 directo al host
+  expondría el juego sin pasar por su SSL.
+- Sin `container_name:` fijo: Coolify gestiona el nombre del contenedor en cada
+  redeploy; uno fijo puede chocar con eso.
+- Sin `env_file:`: las variables las inyecta Coolify desde su panel (sección 4),
+  no un fichero en el VPS.
 
-```bash
-cat > .dockerignore << 'IGNORE'
-node_modules
-dist
-.git
-.env.example
-docs
-electron
-scripts/e2e
-pnpm-lock.yaml
-pnpm-workspace.yaml
-*.md
-IGNORE
+**Si vas a desplegar sin Coolify** (docker compose a mano + Nginx, alternativa
+al final de la sección 8), este compose no te sirve tal cual: necesitas volver a
+publicar el puerto y cargar el `.env`:
+
+```yaml
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
 ```
+
+`.dockerignore` ya existe también y no incluye `pnpm-lock.yaml` ni
+`pnpm-workspace.yaml` — ambos hacen falta en el contexto de build para que
+`pnpm install --frozen-lockfile` funcione; excluirlos rompería la imagen.
 
 ---
 
 ## 7. Construir y levantar el contenedor
+
+### Con Coolify
+
+En el panel: *New Resource → Docker Compose*, apuntando al repo de `game` (por
+GitHub/GitLab con deploy key, o URL pública) y a la rama a desplegar. Coolify
+lee el `docker-compose.yml` de la raíz del repo directamente — no hace falta
+clonar nada a mano en el VPS ni correr `docker compose build`. El build y el
+arranque los dispara el botón *Deploy* (o el webhook de la sección 11).
+
+### Sin Coolify (docker compose a mano)
+
+Con el `.env` de la sección 4 y las dos líneas (`ports`, `env_file`) devueltas
+al `docker-compose.yml` como se indica en la sección 6:
 
 ```bash
 cd /opt/apps/triad-vaults
@@ -284,9 +291,29 @@ curl http://localhost:3001/health
 
 ---
 
-## 8. Configurar Nginx como reverse proxy
+## 8. Dominio y SSL
 
-Crea el archivo de configuración:
+### Con Coolify
+
+En la pestaña *Domains* del servicio `app`, escribe `game.tudominio.com` y el
+puerto `3001`. Coolify pide el certificado Let's Encrypt automáticamente en el
+primer deploy (el DNS del paso 2 tiene que haber propagado ya) y lo renueva
+solo. Su Traefik ya escucha en los puertos 80 y 443 del VPS — no instales Nginx
+ni Certbot para esta app, competirían por esos mismos puertos.
+
+### Alternativa sin Coolify: Nginx + Certbot
+
+Solo si el VPS **no** tiene Coolify. Primero, en el `docker-compose.yml`, añade
+de vuelta lo que se quitó en la sección 6:
+
+```yaml
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+```
+
+Crea el archivo de configuración de Nginx:
 
 ```bash
 sudo nano /etc/nginx/sites-available/triad-vaults
@@ -309,7 +336,7 @@ server {
     listen 443 ssl http2;
     server_name game.tudominio.com;
 
-    # Los certificados los pone Certbot aquí (se crean en el paso 9)
+    # Los certificados los pone Certbot aquí (se crean más abajo)
     # ssl_certificate /etc/letsencrypt/live/game.tudominio.com/fullchain.pem;
     # ssl_certificate_key /etc/letsencrypt/live/game.tudominio.com/privkey.pem;
 
@@ -357,9 +384,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
----
-
-## 9. SSL con Let's Encrypt (Certbot)
+Y el certificado:
 
 ```bash
 sudo certbot --nginx -d game.tudominio.com
@@ -379,7 +404,7 @@ sudo certbot renew --dry-run
 
 ---
 
-## 10. Verificar que todo funciona
+## 9. Verificar que todo funciona
 
 ```bash
 # Health check por HTTPS
@@ -401,7 +426,11 @@ Comprobaciones:
 
 ---
 
-## 11. Mantenimiento
+## 10. Mantenimiento
+
+Con Coolify, todo esto también está en su UI (pestaña *Logs*, *Terminal*, uso de
+recursos por recurso); los comandos de abajo son la vía directa por SSH cuando
+hace falta más detalle.
 
 ### Logs del contenedor
 
@@ -449,7 +478,17 @@ sudo systemctl reload nginx
 
 ---
 
-## 12. Actualizar el juego
+## 11. Actualizar el juego
+
+### Con Coolify
+
+No hace falta `git pull` ni `docker compose` a mano en el VPS. Conecta el
+webhook de tu repo (GitHub/GitLab) en la pestaña *Webhooks* del recurso para que
+cada push a la rama seguida dispare un redeploy automático, o usa el botón
+*Redeploy* del panel para hacerlo a mano. El resto de esta sección (`deploy.sh`,
+`docker compose` directo) es solo para el despliegue manual sin Coolify.
+
+### Sin Coolify
 
 Cuando hagas cambios en el código y quieras desplegar la nueva versión:
 
@@ -506,7 +545,7 @@ Uso:
 
 ---
 
-## 13. Backups
+## 12. Backups
 
 ### Base de datos (PostgreSQL)
 
@@ -548,7 +587,22 @@ gunzip -c /opt/backups/triadvaults/triadvaults_XXXXXXXX_XXXXXX.sql.gz | sudo -u 
 
 ---
 
-## 14. Troubleshooting
+## 13. Troubleshooting
+
+### El cliente no encuentra la API ni el socket, aunque el healthcheck esté en verde
+
+**Síntoma:** con Coolify, `/health` responde bien pero en las DevTools del
+navegador el socket intenta conectar a `localhost` o a una URL vacía, y las
+llamadas a la API fallan con un dominio que no existe.
+
+**Causa:** `TRIADVAULTS_API_URL` y/o `VITE_SOCKET_URL` no están marcadas como
+*"Available at Buildtime"* en el panel de Coolify (sección 4). El build de Vite
+las hornea en el bundle del cliente en el momento de construir la imagen; si
+Coolify solo las inyecta en el contenedor ya arrancado, el bundle sale con esas
+URLs vacías y no hay forma de arreglarlo sin reconstruir la imagen.
+
+**Solución:** marca las dos como build-time en Coolify y vuelve a desplegar
+(no basta con reiniciar el contenedor — hay que reconstruir la imagen).
 
 ### El contenedor no alcanza la API de cuentas
 
@@ -638,7 +692,8 @@ environment:
 ### Ver qué está consumiendo recursos
 
 ```bash
-docker stats triad-vaults
+# Sin container_name fijo (Coolify lo asigna), busca el id primero:
+docker stats $(docker compose ps -q app)
 htop
 ```
 
@@ -646,33 +701,51 @@ htop
 
 ## Resumen de puertos
 
+**Con Coolify** (por defecto en este repo):
+
+| Puerto | Servicio | Acceso |
+|---|---|---|
+| 80 | Traefik de Coolify (redirige a 443) | Público |
+| 443 | Traefik de Coolify (SSL → red interna) | Público |
+| 3001 | Triad Vaults (Docker, solo `expose`) | Solo red interna de Docker |
+| 5432 | PostgreSQL (host) | Solo localhost + Docker bridge |
+
+**Sin Coolify** (Nginx manual, sección 8):
+
 | Puerto | Servicio | Acceso |
 |---|---|---|
 | 80 | Nginx (redirige a 443) | Público |
 | 443 | Nginx (SSL → proxy a 3001) | Público |
-| 3001 | Triad Vaults (Docker) | Solo localhost |
+| 3001 | Triad Vaults (Docker, publicado al host) | Solo localhost |
 | 5432 | PostgreSQL (host) | Solo localhost + Docker bridge |
 
 ---
 
 ## Arquitectura en producción
 
+Con Coolify:
+
 ```
                 Internet
                     │
             ┌───────┴───────┐
-            │   Nginx :443  │  ← SSL (Let's Encrypt)
-            │  reverse proxy│
+            │  Traefik :443 │  ← SSL automático (Coolify)
+            │  (Coolify)    │
             └───────┬───────┘
-                    │ proxy_pass
+                    │ red interna de Docker
           ┌─────────┴──────────┐
           │  Docker Container  │
-          │  triad-vaults:3001 │
+          │  app:3001 (expose) │
           │  (Node.js + static)│
           └─────────┬──────────┘
-                    │ host.docker.internal
+                    │ host.docker.internal, o red interna
+                    │ de Docker si realtyba-api también
+                    │ corre en el mismo Coolify
           ┌─────────┴──────────┐
           │   PostgreSQL :5432 │  ← Central; la usa realtyba-api
           │   (base: triadvaults)│
           └────────────────────┘
 ```
+
+Sin Coolify (Nginx + Certbot manual), el diagrama es el mismo cambiando el
+bloque de Traefik por `Nginx :443 (reverse proxy, proxy_pass a 127.0.0.1:3001)`.

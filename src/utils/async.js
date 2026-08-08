@@ -13,5 +13,9 @@
  * @returns {Promise<void>}
  */
 export function yieldToMain() {
-  return new Promise(resolve => setTimeout(resolve, 0));
+  return new Promise(resolve => {
+    requestAnimationFrame(() => {
+      setTimeout(resolve, 0);
+    });
+  });
 }

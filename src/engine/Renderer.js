@@ -166,23 +166,8 @@ export class EngineRenderer {
         await this.renderer.compileAsync(scene, camera);
       } else {
         // En navegadores sin KHR_parallel_shader_compile, compile() bloquea el hilo entero.
-        // Lo partimos en grupos pequeños para que la UI (y el spinner) respiren.
-        const meshes = [];
-        scene.traverse(obj => {
-          if (obj.isMesh || obj.isInstancedMesh) {
-            meshes.push(obj);
-            obj.visible = false;
-          }
-        });
-
-        for (let i = 0; i < meshes.length; i++) {
-          meshes[i].visible = true;
-          this.renderer.compile(scene, camera);
-          meshes[i].visible = false;
-          if (i % 3 === 0) await yieldToMain();
-        }
-
-        meshes.forEach(m => m.visible = true);
+        // Hacemos una compilación sincrónica normal. El CSS loader acelerado por hardware seguirá rotando.
+        this.renderer.compile(scene, camera);
       }
       
       invisibles.forEach(obj => {

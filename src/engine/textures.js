@@ -3,10 +3,16 @@ import * as THREE from 'three';
 /**
  * Texturas generadas por canvas.
  *
- * El juego no carga ningún fichero de imagen a propósito: todo el aspecto sale de
- * la semilla y del tema, así que las texturas se dibujan en tiempo de ejecución.
- * Eso mantiene el paquete pequeño y permite que cada bioma tenga su suelo sin
- * añadir megas al build.
+ * **Las superficies no cargan ningún fichero de imagen**: todo el aspecto de suelos y
+ * muros sale de la semilla y del tema, así que las texturas se dibujan en tiempo de
+ * ejecución. Eso mantiene el paquete pequeño y permite que cada bioma tenga su suelo sin
+ * añadir megas al build. Con el entorno de reflejo de `environment.js`, que también es
+ * un lienzo, la bóveda entera se pinta sin un solo binario.
+ *
+ * La regla dejó de ser absoluta el 2026-08-07: los **agentes** sí son modelos `.glb`
+ * (ver `assets/manifest.js`). El motivo es que un personaje con esqueleto y animación de
+ * caminar no se genera por código de forma razonable, mientras que un suelo o un muro
+ * sí. Los modelos no van en el repositorio y el juego arranca sin ellos.
  *
  * Las texturas se cachean por color: un nivel las pide una vez por material, y
  * regenerarlas en cada `build()` provocaba un tirón al cambiar de nivel.
@@ -137,6 +143,81 @@ export function createWallRoughnessTexture() {
       const value = 150 + band + (Math.random() - 0.5) * 40;
       image.data[i] = image.data[i + 1] = image.data[i + 2] = value;
       image.data[i + 3] = 255;
+    }
+    ctx.putImageData(image, 0, 0);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = maxAnisotropy;
+    return texture;
+  });
+}
+
+/**
+ * Relieve de los muros, derivado del mismo ruido que la rugosidad.
+ *
+ * ## Por qué hace falta
+ *
+ * Con el entorno de reflejo ya puesto (`engine/environment.js`), los muros pasan a
+ * tener algo que reflejar — pero lo reflejan como un espejo plano, porque su normal es
+ * constante en toda la cara. El mapa de rugosidad varía *cuánto* se difumina el
+ * reflejo; lo que hace falta para que se lea el volumen es variar **hacia dónde**
+ * apunta la superficie. Eso es este mapa.
+ *
+ * ## Por qué se deriva y no se dibuja aparte
+ *
+ * Se calcula por diferencias finitas sobre la misma señal de altura que genera la
+ * rugosidad. Dibujar dos texturas independientes daría un muro cuyos brillos y cuyos
+ * relieves están en sitios distintos, que es la forma clásica de que un material se vea
+ * sucio sin que nadie sepa decir por qué.
+ *
+ * `normalMap` es un dato **direccional**, no un color: va en espacio lineal y no lleva
+ * `colorSpace = SRGBColorSpace`. Marcarlo como sRGB le aplicaría la curva gamma a unas
+ * coordenadas y el relieve saldría torcido.
+ */
+export function createWallNormalTexture() {
+  return cached('wall-normal', () => {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+
+    const ctx = canvas.getContext('2d');
+    const image = ctx.createImageData(size, size);
+
+    // Misma señal que `createWallRoughnessTexture`, sin el ruido aleatorio: un normal
+    // con ruido por téxel produce un centelleo muy visible al mover la cámara.
+    const height = (x, y) => {
+      const panel = Math.sin(y * 0.45) * 0.5;
+      const seam = Math.cos(x * 0.19) * 0.28;
+      const rivet = Math.sin(x * 1.6) * Math.sin(y * 1.6) * 0.12;
+      return panel + seam + rivet;
+    };
+
+    // Intensidad del relieve. Por encima de ~2 los muros se leen como roca, y esto es
+    // una bóveda de paneles metálicos.
+    const strength = 1.4;
+
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        // Envuelve por los bordes: la textura se repite, y una discontinuidad ahí se
+        // ve como una costura luminosa recorriendo el muro.
+        const left = height((x - 1 + size) % size, y);
+        const right = height((x + 1) % size, y);
+        const up = height(x, (y - 1 + size) % size);
+        const down = height(x, (y + 1) % size);
+
+        const dx = (left - right) * strength;
+        const dy = (up - down) * strength;
+        const length = Math.hypot(dx, dy, 1);
+
+        const i = (y * size + x) * 4;
+        image.data[i] = ((dx / length) * 0.5 + 0.5) * 255;
+        image.data[i + 1] = ((dy / length) * 0.5 + 0.5) * 255;
+        image.data[i + 2] = (1 / length) * 0.5 * 255 + 127.5;
+        image.data[i + 3] = 255;
+      }
     }
     ctx.putImageData(image, 0, 0);
 

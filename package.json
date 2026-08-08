@@ -12,6 +12,7 @@
     "build": "vite build",
     "server": "node server/index.js",
     "setup:env": "node scripts/setup-env.js",
+    "assets": "node scripts/fetch-assets.mjs",
     "start": "electron .",
     "icon": "node scripts/make-icon.js",
     "predist": "rm -rf release",
@@ -24,10 +25,11 @@
     "dist:mac": "npm run icon && npm run build && electron-builder --mac --publish never",
     "validate:levels": "node scripts/validate-levels.js",
     "validate:puzzles": "node scripts/validate-puzzles.js",
+    "validate:movement": "node scripts/validate-movement.js",
     "validate:achievements": "node scripts/validate-achievements.js",
     "validate:rooms": "node scripts/test-rooms.js",
     "validate:leaks": "node scripts/check-leaks.js",
-    "validate": "npm run validate:levels && npm run validate:puzzles && npm run validate:achievements && npm run validate:rooms && npm run validate:leaks",
+    "validate": "npm run validate:levels && npm run validate:puzzles && npm run validate:movement && npm run validate:achievements && npm run validate:rooms && npm run validate:leaks",
     "test:e2e": "node scripts/e2e/run.js"
   },
   "dependencies": {

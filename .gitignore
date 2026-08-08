@@ -22,3 +22,13 @@ package-lock.json
 # Grafo de conocimiento de graphify: artefacto generado, se reconstruye
 # con `graphify update .` (solo AST, sin coste de API).
 graphify-out/
+
+# Modelos 3D. Se bajan con `npm run assets` a partir de la lista de
+# src/assets/manifest.js, que es la que sí está versionada. Fuera del repositorio por
+# dos motivos: son binarios —cada versión se guardaría entera y el historial no
+# adelgaza nunca— y vienen de una fuente externa con su propia licencia, así que es
+# más honesto apuntar a ella que copiarla sin rastro. CREDITS.md también se genera.
+#
+# El juego arranca sin ellos: los agentes se ven con la geometría primitiva de
+# siempre. Ver la cabecera de src/engine/AssetLoader.js.
+public/models/

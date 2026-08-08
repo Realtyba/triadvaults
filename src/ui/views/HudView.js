@@ -22,8 +22,20 @@ export class HudView {
     'elapsedTime',
     'inputMode',
     'isTouch',
+    'teammates',
+    'zoom',
     'lang'
   ];
+
+  /**
+   * Huecos de compañero que se montan en el esqueleto.
+   *
+   * Dos, porque la sala es de tres y el tercero es uno mismo. Se montan siempre y se
+   * ocultan los que sobren, en vez de crearlos al vuelo: reconstruir HTML dentro del
+   * HUD es justo lo que este módulo evita, y lo vigila un `MutationObserver` en los
+   * e2e (`scripts/e2e/scenarios/solo.js`).
+   */
+  static TEAM_SLOTS = 2;
 
   constructor(root, ctx) {
     this.root = root;
@@ -44,6 +56,13 @@ export class HudView {
         <div class="hud-item"><span class="hud-label">${this.t('code')}</span><span class="hud-value" data-ref="code">----</span></div>
         <div class="hud-item"><span class="hud-label">${this.t('active_agents')}</span><span class="hud-value" data-ref="agents">1 / 3</span></div>
         <div class="hud-item"><span class="hud-label">${this.t('puzzle_status')}</span><span class="hud-value" data-ref="status">${this.t('pending')}</span></div>
+        <!-- El zoom vive en la barra y no en un menú: es un ajuste que se toca en
+             mitad de la acción —para ver venir al fantasma o para leer una placa
+             lejana—, no una vez al empezar. -->
+        <button class="btn btn-sm btn-secondary hud-zoom" data-action="view:zoom"
+                title="${this.t('btn_zoom')}" aria-label="${this.t('btn_zoom')}">
+          ${icon('zoom', { size: 14 })}<span data-ref="zoom">100%</span>
+        </button>
         <button class="btn btn-sm btn-secondary" data-action="game:pause">${this.t('btn_pause')}</button>
       </div>
 
@@ -55,6 +74,15 @@ export class HudView {
           <div class="bar__ghost" data-ref="healthGhost"></div>
           <div class="bar__fill" data-ref="healthFill"></div>
         </div>
+      </div>
+
+      <div class="hud-team" data-ref="team">
+        ${Array.from({ length: HudView.TEAM_SLOTS }, (_, i) => `
+          <div class="hud-team__agent hidden" data-ref="teamSlot${i}">
+            <span class="hud-team__name" data-ref="teamName${i}"></span>
+            <div class="bar bar--slim"><div class="bar__fill" data-ref="teamFill${i}"></div></div>
+          </div>
+        `).join('')}
       </div>
 
       <div class="hud-objective glass-panel">
@@ -81,6 +109,7 @@ export class HudView {
       code: ref('code'),
       agents: ref('agents'),
       status: ref('status'),
+      zoom: ref('zoom'),
       healthValue: ref('healthValue'),
       healthFill: ref('healthFill'),
       healthGhost: ref('healthGhost'),
@@ -90,7 +119,13 @@ export class HudView {
       progressFill: ref('progressFill'),
       timer: ref('timer'),
       inputMode: ref('inputMode'),
-      inputLabel: ref('inputLabel')
+      inputLabel: ref('inputLabel'),
+      team: ref('team'),
+      teamSlots: Array.from({ length: HudView.TEAM_SLOTS }, (_, i) => ({
+        root: ref(`teamSlot${i}`),
+        name: ref(`teamName${i}`),
+        fill: ref(`teamFill${i}`)
+      }))
     };
     this.lang = this.ctx.lang;
   }
@@ -105,8 +140,10 @@ export class HudView {
     setText(this.refs.agents, `${state.playersCount} / 3`);
     setText(this.refs.status, state.puzzleSolved ? this.t('solved') : this.t('pending'));
     toggleClass(this.refs.status, 'is-done', state.puzzleSolved);
+    setText(this.refs.zoom, `${state.zoom ?? 100}%`);
 
     this.renderHealth(state.health);
+    this.renderTeam(state.teammates);
     this.renderTimer(state.elapsedTime || 0);
     this.renderInputMode(state.inputMode);
     this.renderHint(state.inputMode);
@@ -115,6 +152,35 @@ export class HudView {
       this.refs.objective.innerHTML = esc(state.objectiveText);
     }
     setWidth(this.refs.progressFill, state.puzzleProgress);
+  }
+
+  /**
+   * Vida y estado de los otros dos agentes.
+   *
+   * En partida el HUD solo decía "1 / 3", así que no había forma de saber si un
+   * compañero estaba en pie sin buscarlo con la vista por la sala. Importa porque los
+   * puzles exigen sincronía: en `PressurePlates` hay que pisar N placas a la vez, y si
+   * uno está caído la partida está esperando a un respawn que nadie ve venir.
+   *
+   * @param {Array<{uid: string, name: string, health: number, alive: boolean}>} teammates
+   */
+  renderTeam(teammates = []) {
+    if (!this.refs.teamSlots) return;
+
+    this.refs.teamSlots.forEach((slot, i) => {
+      const mate = teammates[i];
+      toggleClass(slot.root, 'hidden', !mate);
+      if (!mate) return;
+
+      setText(slot.name, mate.name || '···');
+      setWidth(slot.fill, mate.health ?? 0);
+      slot.fill.dataset.level = mate.health > 50 ? 'high' : mate.health > 20 ? 'mid' : 'low';
+      toggleClass(slot.root, 'is-down', !mate.alive);
+    });
+
+    // Sin compañeros —en solitario o sin conexión— el bloque entero desaparece: dejar
+    // un hueco vacío en la franja inferior le come sitio al pulgar en un móvil.
+    toggleClass(this.refs.team, 'hidden', teammates.length === 0);
   }
 
   /** Formatea segundos como MM:SS. */

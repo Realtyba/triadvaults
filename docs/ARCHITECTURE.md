@@ -229,27 +229,45 @@ tienen ningún código guardado y por tanto no podían verificarse con ningún v
 ## 8. Capa visual
 
 El acabado de imagen vive en `src/engine/` y está gobernado por **un único sitio**:
-`QualitySettings.js`. Sus presets (`bajo | medio | alto | ultra`) deciden postprocesado,
-sombras, `pixelRatio`, SMAA, partículas y luces de acento. Se detecta uno inicial leyendo
-el renderer real de WebGL —`devicePixelRatio` alto no implica GPU potente— y el jugador
-puede cambiarlo desde **Ajustes**, con efecto inmediato.
+`QualitySettings.js`. Sus presets (`bajo | movil | medio | alto | ultra`) deciden
+postprocesado, sombras, `pixelRatio`, SMAA, partículas y luces de acento. Se detecta uno
+inicial leyendo el renderer real de WebGL —`devicePixelRatio` alto no implica GPU
+potente— y el jugador puede cambiarlo desde **Ajustes**, con efecto inmediato.
 
 | Módulo | Qué aporta |
 |---|---|
 | `PostFX.js` | bloom, viñeta, aberración cromática, grano y destello de daño, en un solo pase de shader |
-| `textures.js` | rejillas y ruido generados por canvas: ningún fichero de imagen en el paquete |
+| `textures.js` | rejillas, ruido y relieve generados por canvas: las superficies no cargan ningún fichero |
+| `environment.js` | entorno de reflejo por bioma, prefiltrado con PMREM |
 | `Lighting.js` | clave rasante, contraluz y luces de acento que laten |
 | `Particles.js` | motas de ambiente e impactos, con el pool reservado por adelantado |
 | `CameraShake.js` | sacudida con decaimiento al cuadrado, muestreada de ondas continuas |
 | `AmbientScene.js` | bóveda decorativa que orbita detrás del menú |
+| `AssetLoader.js` | modelos `.glb` de los agentes, con respaldo a la geometría primitiva |
+| `Stats.js` | contador de fotogramas y llamadas de dibujo bajo `?stats=1` |
 
-Dos decisiones que no son evidentes:
+Decisiones que no son evidentes:
 
 - El grano se atenúa en las sombras (`grainMask`). Aplicado plano, las zonas oscuras —que
   aquí son casi toda la pantalla— se llenaban de puntos y parecían ruido de vídeo.
 - Las molduras de los muros van **metidas hacia dentro**. Con la cámara cenital lo que se
   ve de un muro es su cara superior, y una moldura del mismo tamaño la tapaba entera:
   todos los muros se leían como losas de neón macizas, sin volumen.
+- **`scene.environment` no es un adorno.** El suelo y los muros se declaran con
+  `metalness` entre 0,65 y 0,8, y en un modelo PBR eso traslada la respuesta al término
+  especular: sin entorno que reflejar devolvían casi negro. El juego estuvo así mucho
+  tiempo y era la causa principal de que la bóveda se viera plana pese a tener materiales
+  físicos, iluminación por bioma y bloom.
+- **El preset `movil` existe porque `bajo` apagaba el neón.** Todo el neón son materiales
+  `emissive`, no `MeshBasicMaterial` brillante, así que sin bloom se lee como color plano
+  — y `bajo`, que era lo que recibía cualquier teléfono, no tiene postprocesado. El
+  presupuesto para encenderlo sale de instanciar los muros (de unas 66 llamadas de dibujo
+  a 2) y de dejar una sola luz puntual de agente. Medido con `?stats=1`: 48 llamadas por
+  fotograma en una sala del nivel 1.
+- **Los muros son dos `InstancedMesh`**, uno de cuerpos y otro de molduras. Ya compartían
+  geometría y material, que ahorra memoria pero no llamadas de dibujo: cada `Mesh` seguía
+  siendo un envío propio. Las cajas de colisión salen de las mismas cifras que las
+  matrices de instancia, no de la escena.
 
 En la interfaz, `--accent` lo reescribe `UIManager.applyThemeAccent()` con el color del
 bioma, así que el HUD acompaña al nivel. Los iconos son SVG en `src/ui/icons.js`: los

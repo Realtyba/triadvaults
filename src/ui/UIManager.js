@@ -8,6 +8,7 @@ import { LobbyView } from './views/LobbyView.js';
 import { HudView } from './views/HudView.js';
 import { TouchControlsView } from './views/TouchControlsView.js';
 import { ReconnectingOverlay } from './views/ReconnectingOverlay.js';
+import { RotateNotice } from './views/RotateNotice.js';
 import { AchievementToast } from './views/AchievementToast.js';
 import { ModalHost } from './modals/ModalHost.js';
 import { BLOCKING_MODALS } from './modals/definitions.js';
@@ -18,6 +19,15 @@ import { icon } from './icons.js';
 import { quality } from '../engine/QualitySettings.js';
 import { bindings } from '../engine/Bindings.js';
 import { isCoarsePointer, watchViewport } from '../engine/device.js';
+import {
+  isFullscreen,
+  isFullscreenSupported,
+  lockLandscape,
+  releaseWakeLock,
+  requestWakeLock,
+  toggleFullscreen,
+  watchFullscreen
+} from '../engine/fullscreen.js';
 import { offlineStore } from '../network/OfflineStore.js';
 import { mirrorToSteam, reconcileWithSteam } from '../network/SteamBridge.js';
 
@@ -59,6 +69,10 @@ export class UIManager {
     // clase del documento y el estado se recalculan, no se fijan al arrancar.
     this.applyViewportState();
     watchViewport(() => this.applyViewportState());
+
+    // También se sale de pantalla completa con Escape o con el gesto del sistema, sin
+    // pasar por el botón: el estado se escucha en vez de deducirlo de la última acción.
+    watchFullscreen(active => this.store.patch({ isFullscreen: active }));
 
     // Sesión a medias (usuario sin token): se limpia para no mostrar un menú inservible.
     if (!session.isValid()) session.clear();
@@ -103,6 +117,9 @@ export class UIManager {
       // por debajo de cualquier diálogo.
       touch: el('div', { className: 'touch-layer hidden' }),
       modal: el('div', { className: 'modal-host hidden' }),
+      // Por encima de los modales: si el móvil está de pie, ni el HUD ni un diálogo
+      // se leen bien, así que este aviso es lo único que debe verse.
+      rotate: el('div', { className: 'rotate-notice hidden' }),
       reconnect: el('div', { className: 'reconnect-overlay hidden' }),
       // Fuera de las vistas: los avisos de logro se ven en el menú y en partida.
       toast: el('div', { className: 'toast-host hidden' })
@@ -138,6 +155,7 @@ export class UIManager {
     this.hud = new HudView(this.nodes.hud, this.ctx);
     this.touchControls = new TouchControlsView(this.nodes.touch, this.ctx, this.game.input.touch);
     this.modals = new ModalHost(this.nodes.modal, this.ctx);
+    this.rotateNotice = new RotateNotice(this.nodes.rotate, this.ctx);
     this.reconnect = new ReconnectingOverlay(this.nodes.reconnect, this.ctx);
     this.toasts = new AchievementToast(this.nodes.toast, this.ctx);
 
@@ -150,6 +168,7 @@ export class UIManager {
     this.subscribeView(this.hud, HudView.keys);
     this.subscribeView(this.touchControls, TouchControlsView.keys);
     this.subscribeView(this.modals, ModalHost.keys);
+    this.subscribeView(this.rotateNotice, RotateNotice.keys);
     this.subscribeView(this.reconnect, ReconnectingOverlay.keys);
 
     this.store.subscribe(['view'], s => this.applyViewVisibility(s));
@@ -164,6 +183,7 @@ export class UIManager {
     this.hud.render(state);
     this.touchControls.render(state);
     this.modals.render(state, null);
+    this.rotateNotice.render(state, null);
     this.reconnect.render(state, null);
   }
 
@@ -272,6 +292,9 @@ export class UIManager {
       'modal:open': ({ modal }) => this.store.patch({ modal }),
       'modal:close': () => this.closeModal(),
 
+      'view:fullscreen': () => this.toggleFullscreen(),
+      'view:zoom': () => this.game.cycleZoom(),
+
       'app:lang': ({ lang }) => this.setLanguage(lang),
       'app:audio': () => this.toggleAudio(),
       'app:quality': ({ level }) => this.store.patch({ quality: quality.set(level) }),
@@ -316,6 +339,50 @@ export class UIManager {
   /** El dedo se detecta al primer toque, no al arrancar: se refleja igual que el mando. */
   setTouchActive() {
     this.store.patch({ inputMode: 'touch' });
+  }
+
+  // -------------------------------------------------- pantalla completa
+
+  /**
+   * El estado no se escribe aquí: lo publica `watchFullscreen`.
+   *
+   * Es a propósito. El navegador puede negar la petición —fuera de un gesto del
+   * usuario, o en un iPhone, donde el elemento raíz no la admite— y el jugador también
+   * puede salirse por su cuenta con Escape. Si este método marcase el estado, el icono
+   * se quedaría mintiendo en los dos casos.
+   */
+  async toggleFullscreen() {
+    await toggleFullscreen();
+  }
+
+  /**
+   * Entrar en partida es el momento de pedir pantalla completa y apaisado.
+   *
+   * Se pide aquí y no al arrancar el juego porque las dos APIs exigen un gesto reciente
+   * del jugador, y "pulsar Jugar" lo es. Que fallen no es excepcional: en iOS el
+   * bloqueo de orientación no existe, y para eso está `RotateNotice`.
+   */
+  async enterPlaySession() {
+    if (!this.store.get().isTouch) return;
+    if (isFullscreenSupported() && !isFullscreen()) await toggleFullscreen();
+    else await lockLandscape();
+    await requestWakeLock();
+  }
+
+  /**
+   * Vuelve a pedir el centinela de pantalla al regresar de segundo plano.
+   *
+   * Aparte de `enterPlaySession` porque aquí **no** hay que volver a pedir pantalla
+   * completa: sin un gesto reciente el navegador la niega, y pedirla en cada cambio de
+   * pestaña sólo llenaría la consola de rechazos.
+   */
+  restoreWakeLock() {
+    requestWakeLock();
+  }
+
+  /** Al volver al menú se suelta el centinela; la pantalla puede apagarse otra vez. */
+  leavePlaySession() {
+    releaseWakeLock();
   }
 
   // ------------------------------------------------------- puerta de acceso
@@ -548,6 +615,9 @@ export class UIManager {
     health
   }) {
     this.applyThemeAccent(themeColor);
+    // Pantalla completa y apaisado se piden al entrar en la bóveda, no al arrancar el
+    // juego: las dos APIs exigen un gesto reciente del jugador, y pulsar Jugar lo es.
+    this.enterPlaySession();
 
     // El objetivo lo dicta el arquetipo de puzle, no el número de placas: con
     // secuencias y relevos la cuenta ya no describe lo que hay que hacer.
@@ -749,6 +819,7 @@ export class UIManager {
   }
 
   stopGame() {
+    this.leavePlaySession();
     if (this.game) this.game.stop();
   }
 

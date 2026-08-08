@@ -15,6 +15,9 @@ import { GHOST_DAMAGE } from '../../shared/events.js';
 import { falloff } from '../utils/math.js';
 import { quality } from '../engine/QualitySettings.js';
 import { PALETTE } from '../engine/materials.js';
+import { StatsOverlay, statsRequested } from '../engine/Stats.js';
+import { assets } from '../engine/AssetLoader.js';
+import { PLAYER_MODELS, playerModelUrl } from '../assets/manifest.js';
 
 const MOVE_SEND_HZ = 20;
 const GHOST_SEND_HZ = 15;
@@ -74,13 +77,21 @@ export class GameApp {
     this.input.onGamepadAction = action => this.onGamepadAction(action);
     this.input.gamepad.onConnectionChange = name => this.ui.setGamepad(name);
     this.input.touch.onConnectionChange = () => this.ui.setTouchActive();
-    // El pellizco escribe en el mismo zoom objetivo que la rueda del ratón.
-    this.input.touch.onPinch = amount => this.camera.zoomBy(amount);
     document.addEventListener('visibilitychange', () => this.onVisibilityChange());
     this.bridge.register();
 
+    // Diagnóstico bajo demanda (`?stats=1`). Apagado no cuesta nada: el bucle ni lo mira.
+    this.stats = statsRequested() && this.renderer.isAvailable
+      ? new StatsOverlay(this.renderer.renderer)
+      : null;
+
     if (!this.renderer.isAvailable) this.ui.alert(this.ui.ctx.t('error_no_webgl'));
-    else this.ambient.start();
+    else {
+      this.ambient.start();
+      // Los modelos se traen mientras se mira el menú, que es tiempo que ya se gasta.
+      // Ver `AssetLoader.preload`: hace innecesaria una pantalla de carga.
+      assets.preload(PLAYER_MODELS.map((_, i) => playerModelUrl(i)));
+    }
 
     this.animate();
   }
@@ -118,7 +129,12 @@ export class GameApp {
     this.camera.reset();
     // La cámara encuadra la sala de este nivel, no la mayor que el juego puede
     // generar: sin la medida real, un nivel pequeño se veía desde demasiado lejos.
-    this.camera.setRoomExtent(Math.max(this.level.info.sizeX, this.level.info.sizeZ));
+    // Los dos ejes por separado, porque también es lo que confina la vista dentro de
+    // la sala cuando el jugador se pega a un muro. Ver `EngineCamera.clampToRoom`.
+    this.camera.setRoomBounds(this.level.info.sizeX, this.level.info.sizeZ);
+    // El zoom sobrevive entre sesiones, así que el botón tiene que arrancar con el
+    // valor guardado y no con el 100 % del estado inicial.
+    this.publishZoom(this.camera.zoomPercent);
 
     if (room) {
       this.players.sync(room.players, this.socket.uid, index => this.level.spawnFor(index));
@@ -159,8 +175,9 @@ export class GameApp {
     this.particles.clearAmbient();
     this.sound.stopBGM();
     // La sala decorativa del menú tiene su propio encuadre; arrastrar el del último
-    // nivel jugado dejaba el menú visto desde otra distancia cada vez.
-    this.camera.setRoomExtent(null);
+    // nivel jugado la dejaba vista desde otra distancia cada vez, y además encerrada
+    // dentro de los límites de una sala que ya no existe.
+    this.camera.setRoomBounds(0, 0);
 
     // Volver al menú devuelve la escena decorativa: sin ella se quedaba una
     // pantalla negra detrás de la interfaz.
@@ -297,6 +314,9 @@ export class GameApp {
     this.particles.update(delta);
 
     this.renderer.render(this.camera.camera, delta);
+    // Después del render: `renderer.info` cuenta lo ya enviado a la GPU, así que
+    // leerlo antes daría siempre las cifras del fotograma anterior.
+    if (this.stats) this.stats.update();
   }
 
   /**
@@ -331,6 +351,9 @@ export class GameApp {
     this.clock.getDelta();
     this.lastFrameTime = -Infinity;
     audio?.resume?.();
+    // El sistema suelta el centinela de pantalla al irse a segundo plano y no lo
+    // devuelve solo: sin esto, volver de una llamada deja el móvil apagándose otra vez.
+    if (this.running) this.ui.restoreWakeLock();
   }
 
   /** Sin conexión no se simula: antes el juego seguía corriendo contra el vacío. */
@@ -340,11 +363,43 @@ export class GameApp {
     return this.socket.currentRoom ? this.socket.isConnected : true;
   }
 
+  /**
+   * Zoom de cámara del jugador.
+   *
+   * Pasa por aquí y no directamente de la entrada a la cámara porque el botón del HUD
+   * necesita ver el valor resultante: la cámara es la dueña del dato (topes,
+   * escalones, persistencia) y este método es el único sitio que lo publica al estado
+   * de la interfaz, venga de la rueda, del dedo o del botón.
+   *
+   * @param {number} percent zoom ya aplicado, en porcentaje
+   */
+  publishZoom(percent) {
+    if (this.lastZoomPercent === percent) return;
+    this.lastZoomPercent = percent;
+    this.ui.store.patch({ zoom: percent });
+  }
+
+  /** Botón de zoom del HUD: salta al siguiente escalón. */
+  cycleZoom() {
+    this.camera.cycleZoom();
+    this.publishZoom(this.camera.zoomPercent);
+  }
+
+  /** Rueda, teclas +/− y pellizco, acumulados por la entrada durante el fotograma. */
+  applyZoomInput() {
+    const delta = this.input.consumeZoom();
+    if (delta === 0) return;
+    this.camera.nudgeZoom(delta);
+    this.publishZoom(this.camera.zoomPercent);
+  }
+
   step(delta) {
+    this.applyZoomInput();
+
     const local = this.players.local;
     if (local) {
       if (local.alive) {
-        local.update(delta, this.input.getMovementVector(), this.level.obstacleBoxes);
+        local.update(delta, this.input.getMovementVector(this.camera.getGroundBasis()), this.level.obstacleBoxes);
         this.throttledSendMove(delta, local);
       }
       this.camera.follow(local.getPosition(), delta);
@@ -360,7 +415,7 @@ export class GameApp {
     this.throttledHudUpdate(delta);
   }
 
-  /** Timer y modo de entrada se actualizan a ~2 Hz: no merece la pena más rápido. */
+  /** Timer, modo de entrada y estado de los compañeros van a ~2 Hz: no hace falta más. */
   throttledHudUpdate(delta) {
     this.hudAccumulator += delta;
     if (this.hudAccumulator < 0.5) return;
@@ -368,8 +423,29 @@ export class GameApp {
 
     this.ui.store.patch({
       elapsedTime: this.level.elapsedSeconds,
-      inputMode: this.input.mode
+      inputMode: this.input.mode,
+      teammates: this.collectTeammates()
     });
+  }
+
+  /**
+   * Estado de los otros agentes para el HUD.
+   *
+   * Se lee del registro de entidades y no del último mensaje del servidor porque el
+   * registro es el único sitio donde confluyen los dos caminos por los que cambia la
+   * vida de un compañero: la conciliación de la sala (`PlayerRegistry.sync`) y los
+   * avisos sueltos de daño. Mirando solo uno, la barra se quedaba atrás.
+   */
+  collectTeammates() {
+    return this.players
+      .list()
+      .filter(entity => !entity.isLocal)
+      .map(entity => ({
+        uid: entity.uid,
+        name: entity.name,
+        health: entity.health,
+        alive: entity.alive
+      }));
   }
 
   /** Distancia a la que el fantasma empieza a notarse en la música. */

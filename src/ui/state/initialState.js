@@ -20,6 +20,11 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     isTouch,
     // Portrait obliga a recolocar el HUD, no solo a encogerlo.
     isPortrait: false,
+    // Lo publica `watchFullscreen`, nunca el botón: también se sale con Escape o con
+    // el gesto del sistema, y el icono tiene que reflejar la realidad.
+    isFullscreen: false,
+    // Compañeros de sala en partida: [{ uid, name, health, alive, isLocal }].
+    teammates: [],
 
     // sesión
     user,
@@ -64,6 +69,9 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     puzzleSolved: false,
     elapsedTime: 0,
     inputMode: 'keyboard', // lo que el jugador está usando: 'keyboard' | 'gamepad' | 'touch'
+    // Zoom de cámara en porcentaje; 100 es el encuadre por defecto. Lo publica
+    // `GameApp.publishZoom`, que es quien habla con la cámara: aquí solo se pinta.
+    zoom: 100,
     paused: false,
     canRegenerate: false,
     alertMessage: ''

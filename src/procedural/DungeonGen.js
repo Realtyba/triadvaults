@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { generateLayout, WALL_HEIGHT, WALL_THICKNESS } from './LayoutGen.js';
-import { createGridTexture, createWallRoughnessTexture } from '../engine/textures.js';
+import { createGridTexture } from '../engine/textures.js';
 import { disposeChildren, markShared } from '../engine/disposal.js';
 import { neonMaterial } from '../engine/materials.js';
+import { createWallMaterial } from '../engine/wallMaterial.js';
 
 /**
  * Cubo unidad compartido por todos los muros y molduras.
@@ -56,12 +57,10 @@ export class DungeonGenerator {
     const { theme, sizeX, sizeZ } = layout;
     this.buildFloor(sizeX, sizeZ, theme);
 
-    const wallMat = new THREE.MeshStandardMaterial({
-      color: theme.wall,
-      roughness: 0.55,
-      metalness: 0.65,
-      roughnessMap: createWallRoughnessTexture()
-    });
+    // El material lleva las aristas dibujadas dentro: sin ellas, y con la cámara en
+    // picado, la cara superior y la lateral de un muro devuelven el mismo reflejo y el
+    // muro se lee como un recorte plano. Ver `engine/wallMaterial.js`.
+    const wallMat = createWallMaterial(theme);
 
     // Emisivo, no `MeshBasicMaterial`: el bloom solo recoge lo que emite luz, y
     // con material básico las molduras eran color plano por muy brillante que fuese.
@@ -75,8 +74,10 @@ export class DungeonGenerator {
       metalness: 0.1
     });
 
-    this.buildBoundary(sizeX, sizeZ, wallMat, trimMat);
-    layout.walls.forEach(wall => this.buildWall(wall.x, wall.z, wall.width, wall.depth, wallMat, trimMat));
+    // Se recogen primero y se instancian después: hasta el último no se sabe cuántos
+    // son, y un `InstancedMesh` necesita el total al construirse.
+    const specs = [...this.boundarySpecs(sizeX, sizeZ), ...layout.walls];
+    this.buildWalls(specs, wallMat, trimMat);
 
     return {
       seed: layout.seed,
@@ -118,7 +119,12 @@ export class DungeonGenerator {
         map: gridTexture,
         emissive: theme.color,
         emissiveMap: gridTexture,
-        emissiveIntensity: 0.35 // la rejilla brilla lo justo para que el bloom la roce
+        emissiveIntensity: 0.35, // la rejilla brilla lo justo para que el bloom la roce
+        // El suelo es la superficie más metálica y la que más pantalla ocupa: es donde
+        // más se notaba no tener entorno que reflejar. Se sube por encima de los muros
+        // porque mirado en picado devuelve el reflejo rasante del horizonte, que es la
+        // franja más luminosa del mapa de entorno.
+        envMapIntensity: 1.6
       })
     );
     floor.receiveShadow = true;
@@ -165,43 +171,79 @@ export class DungeonGenerator {
     this.group.add(plane);
   }
 
-  buildBoundary(sizeX, sizeZ, wallMat, trimMat) {
+  /** Los cuatro muros del perímetro, como especificaciones sin geometría. */
+  boundarySpecs(sizeX, sizeZ) {
     const halfX = sizeX / 2;
     const halfZ = sizeZ / 2;
     const t = WALL_THICKNESS;
 
-    this.buildWall(0, -halfZ - t / 2, sizeX + t * 2, t, wallMat, trimMat);
-    this.buildWall(0, halfZ + t / 2, sizeX + t * 2, t, wallMat, trimMat);
-    this.buildWall(-halfX - t / 2, 0, t, sizeZ, wallMat, trimMat);
-    this.buildWall(halfX + t / 2, 0, t, sizeZ, wallMat, trimMat);
+    return [
+      { x: 0, z: -halfZ - t / 2, width: sizeX + t * 2, depth: t },
+      { x: 0, z: halfZ + t / 2, width: sizeX + t * 2, depth: t },
+      { x: -halfX - t / 2, z: 0, width: t, depth: sizeZ },
+      { x: halfX + t / 2, z: 0, width: t, depth: sizeZ }
+    ];
   }
 
   /**
-   * Un muro y su franja luminosa.
+   * Todos los muros de la sala, en dos llamadas de dibujo.
    *
-   * La franja va **metida hacia dentro**, no desbordando el muro. Con la cámara
-   * cenital lo que se ve de un muro es su cara superior, así que una moldura del
-   * mismo tamaño la tapaba entera y todos los muros se leían como losas de neón
-   * macizas. Dejando un borde oscuro alrededor, la franja se lee como una luz
-   * empotrada y el muro recupera su volumen.
+   * ## Por qué instanciados
+   *
+   * Una sala grande tiene hasta 33 muros y cada uno son **dos** mallas —el cuerpo y su
+   * moldura—, o sea unas 66 de las ~100 llamadas de dibujo del nivel. Ya compartían
+   * geometría (`UNIT_BOX`) y material, que ahorra memoria pero **no** llamadas: cada
+   * `Mesh` sigue siendo un envío propio a la GPU. Instanciándolas, esas 66 pasan a 2.
+   *
+   * Ése es el presupuesto con el que se paga el bloom del preset `movil`: sin este
+   * cambio, encender el postprocesado en un teléfono no cabría en el fotograma.
+   *
+   * ## La franja luminosa
+   *
+   * Va **metida hacia dentro**, no desbordando el muro. Con la cámara cenital lo que se
+   * ve de un muro es su cara superior, así que una moldura del mismo tamaño la tapaba
+   * entera y todos los muros se leían como losas de neón macizas. Dejando un borde
+   * oscuro alrededor, la franja se lee como una luz empotrada y el muro recupera su
+   * volumen.
    */
-  buildWall(x, z, width, depth, wallMat, trimMat) {
-    const wall = new THREE.Mesh(UNIT_BOX, wallMat);
-    wall.scale.set(width, WALL_HEIGHT, depth);
-    wall.position.set(x, WALL_HEIGHT / 2, z);
-    wall.castShadow = true;
-    wall.receiveShadow = true;
-    this.group.add(wall);
+  buildWalls(specs, wallMat, trimMat) {
+    if (specs.length === 0) return;
 
+    const walls = new THREE.InstancedMesh(UNIT_BOX, wallMat, specs.length);
+    walls.castShadow = true;
+    walls.receiveShadow = true;
+
+    const trims = new THREE.InstancedMesh(UNIT_BOX, trimMat, specs.length);
+
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
     const inset = 0.28;
-    const trim = new THREE.Mesh(UNIT_BOX, trimMat);
-    trim.scale.set(Math.max(0.12, width - inset), 0.12, Math.max(0.12, depth - inset));
-    trim.position.set(x, WALL_HEIGHT + 0.02, z);
-    this.group.add(trim);
 
-    // `setFromObject` necesita la matriz al día, y estas mallas se acaban de crear
-    // y escalar sin que haya pasado ningún render que la recalcule.
-    wall.updateMatrixWorld(true);
-    this.obstacleBoxes.push(new THREE.Box3().setFromObject(wall));
+    specs.forEach(({ x, z, width, depth }, i) => {
+      position.set(x, WALL_HEIGHT / 2, z);
+      scale.set(width, WALL_HEIGHT, depth);
+      walls.setMatrixAt(i, matrix.compose(position, quaternion, scale));
+
+      // La caja de colisión sale de las mismas cifras que la matriz. Antes se sacaba
+      // con `setFromObject` de la malla ya escalada; con instancias no hay una malla
+      // por muro de la que leerla, y el resultado es idéntico porque son cajas
+      // alineadas con los ejes y sin rotación.
+      this.obstacleBoxes.push(new THREE.Box3().setFromCenterAndSize(position, scale));
+
+      position.set(x, WALL_HEIGHT + 0.02, z);
+      scale.set(Math.max(0.12, width - inset), 0.12, Math.max(0.12, depth - inset));
+      trims.setMatrixAt(i, matrix.compose(position, quaternion, scale));
+    });
+
+    // Sin esto el recorte por frustum usaría la esfera del cubo unidad —de radio menor
+    // que 1— centrada en el origen, y la sala entera desaparecería en cuanto la cámara
+    // dejara de mirar al centro exacto.
+    [walls, trims].forEach(mesh => {
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      this.group.add(mesh);
+    });
   }
 }

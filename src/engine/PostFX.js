@@ -154,6 +154,31 @@ export class PostFX {
     }
 
     this.composer = composer;
+    this.applyBloomScale();
+  }
+
+  /**
+   * Baja la resolución del bloom por debajo de la del resto de la cadena.
+   *
+   * Va aquí y no en el constructor del pase porque `EffectComposer.setSize` reenvía el
+   * tamaño a **todos** sus pases, así que el valor de construcción lo pisa la primera
+   * llamada —y `build()` hace una—. Tiene que reaplicarse después de cada una.
+   *
+   * El bloom es el único pase cuyo coste es puro relleno de píxeles: cinco desenfoques
+   * encadenados sobre la pantalla completa. Calcularlo a la mitad en un móvil es donde
+   * el recorte se nota en el fotograma y no en la imagen, porque lo que hace el pase es
+   * precisamente difuminar.
+   *
+   * Se mide contra el búfer de dibujo y no contra los píxeles de CSS: `setSize` reparte
+   * píxeles de dispositivo, y mezclar las dos unidades ya desincronizó una vez este
+   * pase del tamaño real de sus render targets.
+   */
+  applyBloomScale() {
+    const scale = quality.get('bloomScale') ?? 1;
+    if (!this.bloomPass || scale >= 1) return;
+
+    const buffer = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    this.bloomPass.setSize(buffer.x * scale, buffer.y * scale);
   }
 
   /** Tiñe el acabado con el color del tema del nivel. */
@@ -194,6 +219,7 @@ export class PostFX {
     // en los presets con más ratio de píxel.
     this.composer.setSize(width, height);
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
+    this.applyBloomScale();
   }
 
   /**

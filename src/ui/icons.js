@@ -32,7 +32,12 @@ const ICONS = {
   zap: '<path d="M4 14l8-12v8h8l-8 12v-8z"/>',
   puzzle: '<path d="M12 2l3 3h4v4l3 3-3 3v4h-4l-3 3-3-3H5v-4l-3-3 3-3V5h4z"/>',
   touch: '<path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M12 11V9.5a1.5 1.5 0 0 1 3 0V11"/><path d="M15 11v-.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5.2-3l-2-3.5a1.5 1.5 0 0 1 2.6-1.5L9 15"/>',
-  pause: '<rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/>'
+  pause: '<rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/>',
+  zoom: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.2 15.2L21 21"/><path d="M7.5 10.5h6"/><path d="M10.5 7.5v6"/>',
+  expand: '<path d="M9 3H3v6"/><path d="M3 3l7 7"/><path d="M15 21h6v-6"/><path d="M21 21l-7-7"/>',
+  collapse: '<path d="M3 9h6V3"/><path d="M10 10L3 3"/><path d="M21 15h-6v6"/><path d="M14 14l7 7"/>',
+  rotateDevice:
+    '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M10 19.5h4"/><path d="M3.5 9.5A9 9 0 0 1 6 5.2"/><path d="M3.2 5.6l.3 3.9 3.9-.3"/>'
 };
 
 /**

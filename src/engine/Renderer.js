@@ -4,9 +4,10 @@ import { quality } from './QualitySettings.js';
 import { setMaxAnisotropy, disposeTextureCache } from './textures.js';
 import { disposeSharedGeometry } from '../procedural/DungeonGen.js';
 import { isHandheld, watchViewport } from './device.js';
+import { EnvironmentBuilder } from './environment.js';
 
 /** Color de fondo y niebla por defecto, hasta que un nivel imponga su tema. */
-const DEFAULT_ATMOSPHERE = { bg: 0x060812, fogDensity: 0.035 };
+const DEFAULT_ATMOSPHERE = { bg: 0x060812, fogDensity: 0.035, color: 0x00f3ff };
 
 export class EngineRenderer {
   constructor(container) {
@@ -20,6 +21,11 @@ export class EngineRenderer {
     if (this.renderer) this.container.appendChild(this.renderer.domElement);
 
     this.postFX = null;
+
+    // Sin esto los materiales metálicos —el suelo y todos los muros— no tienen nada
+    // que reflejar y devuelven casi negro. Ver el porqué largo en `environment.js`.
+    this.environment = this.renderer ? new EnvironmentBuilder(this.renderer) : null;
+    this.applyEnvironment(DEFAULT_ATMOSPHERE.color, DEFAULT_ATMOSPHERE.bg);
 
     // Con freno y agrupando la rotación: en un móvil la barra de URL que se contrae
     // al desplazarse emite `resize` en ráfaga, y cada uno reasigna **todos** los
@@ -104,6 +110,19 @@ export class EngineRenderer {
     this.scene.fog.color.setHex(background);
     this.scene.fog.density = fogDensity;
     if (this.postFX && color !== undefined) this.postFX.setThemeColor(color);
+    this.applyEnvironment(color ?? DEFAULT_ATMOSPHERE.color, background);
+  }
+
+  /**
+   * Reflejo del bioma. Va con la atmósfera y no con las luces porque es lo mismo que
+   * el fondo y la niebla: aquello dentro de lo cual está la sala.
+   *
+   * `EnvironmentBuilder` cachea por color, así que volver a un bioma ya visto —cada
+   * cinco niveles— no vuelve a prefiltrar nada.
+   */
+  applyEnvironment(colorHex, bgHex) {
+    if (!this.environment) return;
+    this.scene.environment = this.environment.get(colorHex, bgHex);
   }
 
   /** Destello de pantalla (daño, apertura de compuerta). */
@@ -144,6 +163,7 @@ export class EngineRenderer {
 
   destroy() {
     if (this.postFX) this.postFX.destroy();
+    if (this.environment) this.environment.dispose();
     if (this.unwatchViewport) this.unwatchViewport();
     if (this.unsubscribeQuality) this.unsubscribeQuality();
     if (this.renderer) this.renderer.dispose();

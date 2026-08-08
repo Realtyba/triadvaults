@@ -52,10 +52,32 @@ de `.env.example`.
 ```bash
 npm run dev        # vite + servidor de sockets a la vez
 npm run server     # solo el servidor
-npm run validate   # niveles + puzzles + logros (correr tras tocar sus JSON)
+npm run assets     # baja los modelos .glb a public/models/ (opcional, ver abajo)
+npm run validate   # niveles + puzzles + movimiento + logros (correr tras tocar sus JSON)
 npm run test:e2e   # e2e por CDP
 npm run dist       # build de Electron (dist:win / dist:linux / dist:mac)
 ```
 
 `npm run validate` es la red de seguridad barata de este repo: los niveles, puzzles y
 logros son JSON y un fallo ahí no lo detecta ningún test.
+
+## Modelos 3D
+
+Los `.glb` de los agentes **no están en el repositorio**: se declaran en
+`src/assets/manifest.js` (fuente y licencia, todos CC0) y los baja `npm run assets`.
+
+**El juego arranca y se juega sin ellos**: `engine/AssetLoader.js` cae a la geometría
+primitiva de siempre, igual que el arranque sobrevive a que falte `steamworks.js`. Si los
+agentes se ven como un cilindro con un cubo por cabeza, no es un fallo: es que falta
+ejecutar `npm run assets`.
+
+## Aspecto y rendimiento
+
+`?stats=1` en la URL enciende un contador de fotogramas y de llamadas de dibujo
+(`engine/Stats.js`). Es la única forma de comprobar en un móvil real que un cambio visual
+cabe en el fotograma; sin él, "va más fluido" es una opinión.
+
+Dos cosas que conviene saber antes de tocar el render, ambas explicadas a fondo en
+`docs/ARCHITECTURE.md §8`: el aspecto de la bóveda depende de `scene.environment`
+(sin entorno, los materiales metálicos devuelven negro) y el preset `movil` es el que
+mantiene el bloom en un teléfono, que es lo que hace que el neón se lea como luz.

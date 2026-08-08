@@ -20,6 +20,10 @@ export function disposeObject3D(root, parent = null) {
   else if (root.parent) root.parent.remove(root);
 
   root.traverse(child => {
+    // Un `InstancedMesh` tiene además su búfer de matrices, que no cuelga ni de la
+    // geometría ni del material: con la geometría marcada como compartida —el caso de
+    // los muros— nada más lo liberaría, y se perdería una sala entera por nivel.
+    if (child.isInstancedMesh) child.dispose();
     if (child.geometry && !isShared(child.geometry)) child.geometry.dispose();
     if (!child.material) return;
 

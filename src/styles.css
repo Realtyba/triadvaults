@@ -16,6 +16,11 @@
   --neon-yellow: #ffaa00;
   --neon-red: #ff0033;
 
+  /* Lado del cuadrado donde nace el joystick, en la esquina inferior izquierda. Es un
+     token global y no una propiedad de `.touch-zone` porque el HUD lo necesita para
+     apartarse: la franja de vida vivía justo debajo del pulgar. */
+  --touch-zone-size: 190px;
+
   /* El menú se ve ahora sobre la escena 3D: los paneles necesitan más cuerpo
      para que el texto se lea encima, y más desenfoque para separarse del fondo. */
   --glass-bg: rgba(8, 11, 22, 0.78);
@@ -1202,6 +1207,21 @@ label {
   color: var(--neon-green);
 }
 
+/* Botón de zoom de la barra. El porcentaje va en cifras de ancho fijo porque el botón
+   se pulsa varias veces seguidas: con ancho variable, la barra entera se recolocaba a
+   cada escalón y el propio botón se escapaba de debajo del cursor. */
+.hud-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-zoom span {
+  min-width: 3.2em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .hud-health {
   position: absolute;
   bottom: 20px;
@@ -1216,6 +1236,63 @@ label {
   font-size: 0.66rem;
   letter-spacing: 0.1em;
   color: var(--text-muted);
+}
+
+/*
+   Escuadra: vida de los otros dos agentes.
+
+   En partida el HUD solo decía "1 / 3", así que no había forma de saber si un compañero
+   seguía en pie sin buscarlo con la vista por la bóveda. Importa porque los puzles
+   exigen sincronía —hay que pisar N placas a la vez— y un agente caído deja a los demás
+   esperando a un respawn que nadie ve venir.
+*/
+.hud-team {
+  position: absolute;
+  bottom: 96px;
+  left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 260px;
+}
+
+.hud-team__agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.hud-team__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.hud-team__agent .bar {
+  flex: 0 0 76px;
+}
+
+/* Caído: se apaga entero en vez de solo vaciar la barra. Una barra a cero se confunde
+   con una barra que aún no ha llegado el dato. */
+.hud-team__agent.is-down {
+  opacity: 0.45;
+}
+
+.hud-team__agent.is-down .hud-team__name {
+  text-decoration: line-through;
+}
+
+.bar--slim {
+  height: 4px;
 }
 
 .hud-objective {
@@ -2120,23 +2197,55 @@ label {
      joystick recibe un `pointercancel` en cuanto el dedo se mueve un poco. */
   touch-action: none;
   user-select: none;
+  /* La capa cubre la pantalla entera pero no debe tragarse nada: sólo la zona del
+     joystick y los botones reciben el dedo. Antes capturaba todo, y por eso cualquier
+     roce en la mitad izquierda —barra del HUD incluida— echaba a andar al agente. */
+  pointer-events: none;
 }
 
-/* El pomo y el anillo se posicionan desde el origen del gesto, así que parten de
-   la esquina y todo el movimiento es `transform`: nunca recalculan el diseño. */
+/*
+   Zona del joystick.
+
+   Es un elemento real y no un cálculo sobre `innerWidth` porque `TouchInput` pregunta
+   por su rectángulo: así el sitio y el tamaño los decide esta hoja, que es donde ya se
+   resuelven el apaisado y los recortes de pantalla, y la prueba e2e puede medirla.
+*/
+.touch-zone {
+  position: absolute;
+  left: calc(10px + env(safe-area-inset-left));
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  width: var(--touch-zone-size);
+  height: var(--touch-zone-size);
+  pointer-events: auto;
+}
+
+/*
+   El pomo y el anillo se posicionan por `transform` desde el origen del gesto, así que
+   parten de la esquina de la zona y nunca recalculan el diseño.
+
+   En reposo el `transform` lo pone esta regla —el centro de la zona— y durante el
+   arrastre lo pisa el que escribe `TouchControlsView`. Por eso al soltar basta con
+   borrar el estilo en línea: esta regla vuelve a ganar sola.
+*/
 .touch-stick {
   position: absolute;
   top: 0;
   left: 0;
   width: 0;
   height: 0;
-  opacity: 0;
+  transform: translate3d(calc(var(--touch-zone-size) / 2), calc(var(--touch-zone-size) / 2), 0);
+  /* Se ve siempre, apagado: en una pantalla sin ningún control a la vista no había
+     forma de saber dónde apoyar el pulgar salvo probando. */
+  opacity: 0.34;
   transition: opacity var(--dur) var(--ease-out);
   pointer-events: none;
 }
 
 .touch-stick.is-active {
   opacity: 1;
+  /* Durante el arrastre el anillo persigue al dedo: animar la posición lo dejaría
+     rezagado respecto al pulgar y se sentiría pastoso. */
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 /* Se centran con márgenes negativos y NO con `translate(-50%, -50%)`: el pomo
@@ -2148,6 +2257,9 @@ label {
   border-radius: 50%;
 }
 
+/* El radio (64px) tiene que valer lo mismo que `STICK_RADIUS` en `engine/TouchInput.js`.
+   Con 56 contra estos 128 de diámetro, el jugador llegaba al tope de velocidad antes de
+   que el pomo tocara el borde, y el último tercio del recorrido no hacía nada. */
 .touch-stick__base {
   width: 128px;
   height: 128px;
@@ -2166,15 +2278,21 @@ label {
   box-shadow: 0 0 18px var(--accent-soft);
 }
 
-/* Botón de acción de la capa táctil: cuadrado, grande y despegado del borde para
-   que no compita con los gestos de sistema del navegador. */
-.touch-btn {
+/* Botones permanentes de partida. Alineados con el borde superior de la barra del HUD,
+   que en móvil arranca a 8 px: así se leen como el extremo derecho de esa misma barra y
+   no como algo suelto encima. El hueco lo reserva `.is-touch .view--hud > .hud-bar`. */
+.touch-actions {
   position: absolute;
-  /* Alineado con el borde superior de la barra del HUD, que en móvil arranca a
-     8 px: así se lee como el extremo derecho de esa misma barra y no como algo
-     suelto encima. El hueco lo reserva `.is-touch .view--hud > .hud-bar`. */
   top: calc(8px + env(safe-area-inset-top));
   right: calc(8px + env(safe-area-inset-right));
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+/* Cuadrado, grande y despegado del borde para que no compita con los gestos de
+   sistema del navegador. */
+.touch-btn {
   display: grid;
   place-items: center;
   width: 52px;
@@ -2189,6 +2307,94 @@ label {
 
 .touch-btn:active {
   background: var(--accent-soft);
+}
+
+/* El de zoom es el único que lleva texto, así que crece a lo ancho en vez de encoger
+   la cifra: 52 px de alto se mantienen para que la zona de toque siga siendo la misma
+   que la de sus vecinos. */
+.touch-btn--zoom {
+  width: auto;
+  gap: 6px;
+  padding: 0 12px;
+  grid-auto-flow: column;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------ diagnóstico (?stats=1) */
+/*
+   Solo aparece con `?stats=1`; ver `engine/Stats.js`. Va sobre el `body` y no dentro de
+   `#ui-layer` para que no lo tape ningún modal ni el aviso de rotación: durante una
+   medición interesa verlo pase lo que pase en la interfaz.
+*/
+.stats-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 999;
+  padding: 3px 8px;
+  border-bottom-right-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.72);
+  color: var(--neon-green);
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------ aviso de rotación */
+/*
+   Tapa la partida entera, por encima incluso de los modales.
+
+   Está porque el bloqueo de orientación **no se puede garantizar**: no existe en Safari
+   de iOS, y donde existe sólo aplica dentro de pantalla completa. Ver el porqué largo
+   en `engine/fullscreen.js`. Sólo sale en partida: el menú se lee bien de pie, lo que
+   no cabe en vertical es la bóveda.
+*/
+.rotate-notice {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--bg-dark);
+  text-align: center;
+}
+
+.rotate-notice__card {
+  max-width: 320px;
+}
+
+.rotate-notice__icon {
+  color: var(--accent);
+  /* Gira una vez y se queda: es una instrucción, no un adorno que deba latir. */
+  animation: rotate-hint 2.4s var(--ease-out) infinite;
+}
+
+.rotate-notice h2 {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--fs-lg);
+  letter-spacing: var(--tracking-title);
+  color: var(--accent);
+}
+
+.rotate-notice p {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+@keyframes rotate-hint {
+  0%,
+  40% {
+    transform: rotate(0deg);
+  }
+  60%,
+  100% {
+    transform: rotate(-90deg);
+  }
 }
 
 /* ------------------------------------------------- objetivos táctiles mínimos */
@@ -2282,8 +2488,9 @@ label {
     align-items: baseline;
     gap: 12px;
     padding: 5px 12px;
-    /* Hueco para el botón de pausa, que flota sobre esta esquina. */
-    padding-right: 60px;
+    /* Hueco para los botones de pantalla completa y pausa, que flotan sobre esta
+       esquina. Dos de 52 px más su separación y el margen del borde. */
+    padding-right: 124px;
   }
 
   .hud-bar .hud-item:first-child {
@@ -2320,17 +2527,27 @@ label {
     font-size: 0.72rem;
   }
 
-  /* La pausa de la barra sobra: la capa táctil pone la suya, más grande. */
-  .is-touch .hud-bar [data-action='game:pause'] {
+  /* La pausa y el zoom de la barra sobran: la capa táctil pone los suyos, más grandes
+     y al alcance del pulgar. Con los dos a la vez el zoom salía duplicado en pantalla. */
+  .is-touch .hud-bar [data-action='game:pause'],
+  .is-touch .hud-bar [data-action='view:zoom'] {
     display: none;
   }
 
-  /* Sin táctil (un móvil con teclado, o el modo de dispositivo del navegador) la
-     pausa sigue haciendo falta, pero como botón compacto que no parte la línea. */
-  .hud-bar [data-action='game:pause'] {
-    margin-left: auto;
+  /* Sin táctil (un móvil con teclado, o el modo de dispositivo del navegador) siguen
+     haciendo falta, pero como botones compactos que no parten la línea. */
+  .hud-bar [data-action='game:pause'],
+  .hud-bar [data-action='view:zoom'] {
     padding: 4px 10px;
     font-size: 0.6rem;
+  }
+
+  .hud-bar [data-action='view:zoom'] {
+    margin-left: auto;
+  }
+
+  .hud-bar [data-action='game:pause'] {
+    margin-left: 0;
   }
 
   .hud-objective {
@@ -2373,6 +2590,35 @@ label {
     align-items: center;
     gap: 8px;
     padding: 4px 10px;
+  }
+
+  /* Con la capa táctil montada, la esquina inferior izquierda es del pulgar: la franja
+     de vida arranca pasada la zona del joystick en vez de quedar debajo de la mano. */
+  .is-touch .view--hud > .hud-health {
+    left: calc(env(safe-area-inset-left) + var(--touch-zone-size) + 18px);
+  }
+
+  /*
+     La escuadra vuelve al flujo, bajo la barra: la franja de abajo ya la comparten la
+     vida, el cronómetro y el pulgar, y meter una cuarta cosa la dejaba ilegible. Aquí
+     arriba se lee de un vistazo, que es como se consulta este dato.
+  */
+  .view--hud > .hud-team {
+    position: relative;
+    inset: auto;
+    flex-direction: row;
+    width: 100%;
+    gap: 6px;
+  }
+
+  .hud-team__agent {
+    flex: 1;
+    min-width: 0;
+    padding: 3px 8px;
+  }
+
+  .hud-team__agent .bar {
+    flex: 0 0 44px;
   }
 
   .hud-health__label {

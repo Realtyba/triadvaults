@@ -13,7 +13,7 @@ import { isCoarsePointer, isHandheld, isMobileGpu } from './device.js';
 
 const STORAGE_KEY = 'triad_quality';
 
-export const QUALITY_LEVELS = ['bajo', 'medio', 'alto', 'ultra'];
+export const QUALITY_LEVELS = ['bajo', 'movil', 'medio', 'alto', 'ultra'];
 
 /**
  * Nota sobre el coste real.
@@ -47,10 +47,53 @@ const PRESETS = {
     impactParticles: 0,
     cornerLights: 2,
     lightBreathing: false,
+    // Luces puntuales de agente: 'all' las tres, 'local' solo la propia.
+    playerLights: 'local',
 
     ghostShroud: false,
     ghostTrail: false,
-    dreadPostFX: false
+    dreadPostFX: false,
+    bloomScale: 1
+  },
+  /**
+   * Móvil: el neón antes que las sombras.
+   *
+   * Existe porque `bajo` era lo que recibía **cualquier** teléfono, y `bajo` apaga el
+   * postprocesado entero. Como todo el neón del juego son materiales `emissive` y no
+   * `MeshBasicMaterial` brillante —decisión deliberada, ver `DungeonGen`—, sin bloom no
+   * se lee como luz sino como color plano. O sea que el aparato en el que más se juega
+   * era justo en el que el juego perdía su identidad visual. Al fantasma ya hubo que
+   * ponerle un contorno por inversión de casco solo para que se viera en este caso.
+   *
+   * El presupuesto para pagarlo sale de dos sitios, no de la nada: los muros pasan a
+   * `InstancedMesh` (de ~66 llamadas de dibujo a 2) y las luces dinámicas bajan de ~8 a
+   * 4. Las sombras siguen apagadas: son lo más caro y lo que menos se nota en una
+   * pantalla de seis pulgadas.
+   */
+  movil: {
+    label: 'MÓVIL',
+    pixelRatio: 1,
+    shadows: false,
+    shadowMapSize: 512,
+    postprocessing: true,
+    bloomStrength: 0.62,
+    bloomThreshold: 0.66,
+    // El bloom se calcula a media resolución y se estira al componer. Es el único
+    // efecto de la cadena cuyo coste es puro relleno de píxeles, así que es donde el
+    // recorte se nota en el fotograma y no en la imagen: lo que hace es difuminar.
+    bloomScale: 0.5,
+    antialias: false,
+    smaa: false,
+    anisotropy: 4,
+    ambientParticles: 90,
+    impactParticles: 10,
+    cornerLights: 2,
+    lightBreathing: true,
+    playerLights: 'local',
+
+    ghostShroud: true,
+    ghostTrail: false,
+    dreadPostFX: true
   },
   medio: {
     label: 'MEDIO',
@@ -67,10 +110,12 @@ const PRESETS = {
     impactParticles: 12,
     cornerLights: 4,
     lightBreathing: true,
+    playerLights: 'all',
 
     ghostShroud: true,
     ghostTrail: false,
-    dreadPostFX: true
+    dreadPostFX: true,
+    bloomScale: 1
   },
   alto: {
     label: 'ALTO',
@@ -89,10 +134,12 @@ const PRESETS = {
     impactParticles: 22,
     cornerLights: 4,
     lightBreathing: true,
+    playerLights: 'all',
 
     ghostShroud: true,
     ghostTrail: true,
-    dreadPostFX: true
+    dreadPostFX: true,
+    bloomScale: 1
   },
   ultra: {
     label: 'ULTRA',
@@ -117,10 +164,12 @@ const PRESETS = {
     impactParticles: 34,
     cornerLights: 6,
     lightBreathing: true,
+    playerLights: 'all',
 
     ghostShroud: true,
     ghostTrail: true,
-    dreadPostFX: true
+    dreadPostFX: true,
+    bloomScale: 1
   }
 };
 
@@ -152,9 +201,10 @@ function detectLevel() {
     const renderer = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
     const lowered = renderer.toLowerCase();
 
-    // Móvil o tableta: el preset bajo es exactamente lo que necesitan.
-    if (isMobileGpu(lowered)) return 'bajo';
-    if (isHandheld()) return 'bajo';
+    // Móvil o tableta: tienen preset propio. Antes caían en `bajo`, que apaga el
+    // postprocesado y con él todo el neón; ver la nota del preset `movil`.
+    if (isMobileGpu(lowered)) return 'movil';
+    if (isHandheld()) return 'movil';
 
     // Software o integradas antiguas: no aguantan el postprocesado.
     if (/swiftshader|llvmpipe|software/.test(lowered)) return 'bajo';

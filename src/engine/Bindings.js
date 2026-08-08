@@ -22,8 +22,21 @@ export const DEFAULT_BINDINGS = {
   interact: ['Space', 'KeyE']
 };
 
-/** Códigos que no se pueden asignar: dejarían al jugador sin salir del juego. */
-const RESERVED = new Set(['Escape', 'F5', 'F11', 'F12', 'Tab']);
+/**
+ * Códigos que no se pueden asignar: dejarían al jugador sin salir del juego, o —los
+ * cuatro últimos— sin el zoom de cámara que gobierna `Input.ZOOM_KEYS`.
+ */
+const RESERVED = new Set([
+  'Escape',
+  'F5',
+  'F11',
+  'F12',
+  'Tab',
+  'Equal',
+  'Minus',
+  'NumpadAdd',
+  'NumpadSubtract'
+]);
 
 const SYMBOLS = {
   ArrowUp: '↑',

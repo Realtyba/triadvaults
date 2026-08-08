@@ -62,7 +62,15 @@ export class AmbientScene {
     this.angle = Math.random() * Math.PI * 2;
   }
 
-  /** Órbita lenta alrededor del centro de la sala. */
+  /**
+   * Órbita lenta alrededor del centro de la sala.
+   *
+   * Mientras `active`, esta escena es la **dueña** de la cámara: escribe su posición y
+   * su orientación a pelo, sin pasar por `EngineCamera`. Por eso se llama después de
+   * `step()` en el bucle y no antes —lo que escriba aquí tiene que ser lo último—, y
+   * por eso `startLevel` empieza parándola. Si alguna vez las dos corrieran a la vez,
+   * el síntoma sería una cámara que tiembla entre la órbita y el jugador.
+   */
   update(delta, camera) {
     if (!this.active || !camera) return;
 

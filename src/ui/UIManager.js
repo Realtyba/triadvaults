@@ -6,6 +6,7 @@ import { createInitialState, FormState } from './state/initialState.js';
 import { MainMenuView } from './views/MainMenuView.js';
 import { LobbyView } from './views/LobbyView.js';
 import { HudView } from './views/HudView.js';
+import { EdgeMarkersView } from './views/EdgeMarkersView.js';
 import { TouchControlsView } from './views/TouchControlsView.js';
 import { ReconnectingOverlay } from './views/ReconnectingOverlay.js';
 import { RotateNotice } from './views/RotateNotice.js';
@@ -113,6 +114,12 @@ export class UIManager {
       main: el('div', { className: 'view view--main' }),
       lobby: el('div', { className: 'view view--lobby hidden' }),
       hud: el('div', { className: 'view view--hud hidden' }),
+      // Fuera del HUD **a propósito**, aunque se dibuje sobre él: el escenario e2e
+      // `solo` vigila `.view--hud` con un `MutationObserver` en modo `subtree` para
+      // cazar reconstrucciones del HUD, y un marcador que se mueve cada fotograma
+      // dentro de esa rama haría fallar esa comprobación sin tener nada que ver con
+      // lo que vigila. Ver `EdgeMarkersView`.
+      edge: el('div', { className: 'edge-markers hidden' }),
       // Va después del HUD y antes de los modales: por encima de los marcadores,
       // por debajo de cualquier diálogo.
       touch: el('div', { className: 'touch-layer hidden' }),
@@ -153,6 +160,7 @@ export class UIManager {
     this.mainMenu = new MainMenuView(this.nodes.main, this.ctx);
     this.lobby = new LobbyView(this.nodes.lobby, this.ctx);
     this.hud = new HudView(this.nodes.hud, this.ctx);
+    this.edgeMarkers = new EdgeMarkersView(this.nodes.edge, this.ctx);
     this.touchControls = new TouchControlsView(this.nodes.touch, this.ctx, this.game.input.touch);
     this.modals = new ModalHost(this.nodes.modal, this.ctx);
     this.rotateNotice = new RotateNotice(this.nodes.rotate, this.ctx);
@@ -161,11 +169,13 @@ export class UIManager {
 
     this.mainMenu.mount(state);
     this.hud.mount();
+    this.edgeMarkers.mount();
     this.touchControls.mount();
 
     this.subscribeView(this.mainMenu, MainMenuView.keys ?? null);
     this.subscribeView(this.lobby, LobbyView.keys);
     this.subscribeView(this.hud, HudView.keys);
+    this.subscribeView(this.edgeMarkers, EdgeMarkersView.keys);
     this.subscribeView(this.touchControls, TouchControlsView.keys);
     this.subscribeView(this.modals, ModalHost.keys);
     this.subscribeView(this.rotateNotice, RotateNotice.keys);
@@ -181,6 +191,7 @@ export class UIManager {
     this.applyViewVisibility(state);
     this.lobby.render(state, null);
     this.hud.render(state);
+    this.edgeMarkers.render(state);
     this.touchControls.render(state);
     this.modals.render(state, null);
     this.rotateNotice.render(state, null);

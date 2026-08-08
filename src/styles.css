@@ -2189,6 +2189,62 @@ label {
    que es lo que garantiza que un dedo sobre el modal de pausa no siga moviendo al
    agente por detrás.
 */
+/* ------------------------------------------------ marcadores de borde (fuera de cuadro)
+
+   Una capa propia entre el HUD y los controles táctiles. No captura el puntero en
+   ningún punto: son un aviso, no un botón, y tragarse un toque aquí sería quitárselo
+   al joystick que hay debajo.
+
+   El `inset` deja la capa a pantalla completa y cada marcador se coloca desde su
+   centro, así que `EdgeMarkersView` solo escribe un desplazamiento respecto al centro
+   y no tiene que saber nada del tamaño de la ventana más allá de sus semiejes. */
+.edge-markers {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.edge-marker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--marker-color, var(--neon-cyan));
+  background: color-mix(in srgb, var(--marker-color, var(--neon-cyan)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--marker-color, var(--neon-cyan)) 55%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--marker-color, var(--neon-cyan)) 40%, transparent);
+  /* El desplazamiento lo escribe la vista; sin transición, porque esto se actualiza
+     cada fotograma y cualquier interpolación del navegador iría por detrás. */
+  will-change: transform;
+}
+
+/* La flecha gira dentro del marcador y el marcador se desplaza: separarlo así deja
+   que la vista escriba un `transform` en cada uno sin que se pisen. */
+.edge-marker__arrow {
+  transform: rotate(var(--marker-angle, 0rad));
+}
+
+/* La embestida del fantasma. Es el único momento en el que el marcador pide que le
+   mires, así que es el único que se mueve por su cuenta. */
+.edge-marker--urgent {
+  animation: edge-marker-pulse 0.55s ease-in-out infinite;
+}
+
+@keyframes edge-marker-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-marker--urgent { animation: none; }
+}
+
 .touch-layer {
   position: absolute;
   inset: 0;

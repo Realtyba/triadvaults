@@ -117,8 +117,49 @@ pisando una placa (interrumpe el puzle) y fatiga de persecución. Cambia de obje
 solo si el rival supera al actual por un margen y ha pasado un tiempo mínimo: sin esa
 histéresis el objetivo oscilaría cada frame.
 
-El fantasma usa el mismo `physics/collision.js` que el jugador, así que desliza contra
-los muros en vez de atravesarlos.
+### Máquina de estados: `ghost/GhostBrain.js`
+
+`TargetSelector` decide **a quién** persigue; `GhostBrain` decide **cómo**. Son tres
+estados, y el reparto de si respeta o no la geometría va con ellos:
+
+| estado | movimiento | velocidad | entra cuando |
+|---|---|---|---|
+| `STALK` (acecha) | ruta del `NavGrid`, **desliza contra muros** con `physics/collision.js` | 0,55× | por defecto, y al perderte de vista más de 2,5 s |
+| `HUNT` (caza) | línea recta, **atraviesa la geometría** | 1× | te ve a menos de 12 unidades, o se le acaba la paciencia |
+| `CHARGE` (embiste) | recta **congelada** al entrar, sin corregir | 1,7× durante 0,9 s y luego 0,7 s parado | te ve a menos de 4,5 unidades |
+
+Antes atravesaba los muros **siempre**, con el argumento de que sin pathfinding una
+aparición que respetase la geometría solo parecería un enemigo con la ruta rota. Es
+cierto; también lo es que atravesando siempre la sala deja de significar nada, porque no
+hay nada que hacer con un muro. Repartirlo por estado convierte el muro en una
+herramienta —romper la línea de visión **funciona**— y hace que ser visto sea el momento
+en el que todo cambia.
+
+La embestida **no corrige** el rumbo durante su carga: es lo que la hace esquivable y por
+tanto justa, y la recuperación posterior es la ventana para escapar.
+
+### Lo que aporta el `NavGrid`
+
+- `hasLineOfSight(ax, az, bx, bz)` — recorrido de vóxeles de Amanatides–Woo. **Simétrico
+  por construcción**, que no es un detalle: con un Bresenham, A→B y B→A recorren celdas
+  distintas cerca de un canto y el fantasma te vería a través de una pared por la que tú
+  no lo ves.
+- `computeFlowField(col, row)` — recorrido por anchura que devuelve las distancias hasta
+  una celda. Campo de flujo y no A\*: la rejilla no pasa de 18×18 y **un campo sirve a
+  todos los fantasmas que persigan a la misma presa**. Lo posee `LevelController`,
+  cacheado por uid y recalculado solo al cambiar la presa de celda.
+
+`npm run validate:ghost` comprueba sobre 240 trazados que todo lo alcanzable tiene ruta,
+que descender por el campo termina, que ver es recíproco y que la máquina no vibra en el
+límite de la visión.
+
+### Red
+
+Del fantasma viajan `{ position, targetUid, state }`. El estado es lo único que **no** se
+deduce de la posición: la animación, el borde encendido y la disolución tienen que
+coincidir en las tres pantallas. Los valores están en `shared/events.js` (`GHOST_STATES`)
+y el servidor los sanea contra esa lista en `sanitizeGhostState`, con el mismo criterio
+que ya aplicaba a `position`.
 
 ---
 
@@ -238,12 +279,16 @@ potente— y el jugador puede cambiarlo desde **Ajustes**, con efecto inmediato.
 |---|---|
 | `PostFX.js` | bloom, viñeta, aberración cromática, grano y destello de daño, en un solo pase de shader |
 | `textures.js` | rejillas, ruido y relieve generados por canvas: las superficies no cargan ningún fichero |
-| `environment.js` | entorno de reflejo por bioma, prefiltrado con PMREM |
-| `Lighting.js` | clave rasante, contraluz y luces de acento que laten |
+| `environment.js` | entorno de reflejo por bioma, prefiltrado con PMREM. Dos fuentes según `envSource`: lienzo pintado o `RoomEnvironment` teñido |
+| `Lighting.js` | clave rasante, contraluz y luces de acento que laten. El volumen de sombra sigue al agente (`setShadowFocus`) |
 | `Particles.js` | motas de ambiente e impactos, con el pool reservado por adelantado |
 | `CameraShake.js` | sacudida con decaimiento al cuadrado, muestreada de ondas continuas |
 | `AmbientScene.js` | bóveda decorativa que orbita detrás del menú |
-| `AssetLoader.js` | modelos `.glb` de los agentes, con respaldo a la geometría primitiva |
+| `AssetLoader.js` | modelos `.glb`, con respaldo a la geometría primitiva |
+| `PropLibrary.js` | atrezo importado, fusionado en una geometría por tipo e instanciado |
+| `ghostMaterial.js` | borde de fresnel y disolución del fantasma, inyectados en un material estándar |
+| `wallMaterial.js` | aristas y brillo de canto de los muros, por el mismo camino |
+| `EdgeMarkersView.js` | flechas de borde para lo que queda fuera de encuadre (en `src/ui/views/`) |
 | `Stats.js` | contador de fotogramas y llamadas de dibujo bajo `?stats=1` |
 
 Decisiones que no son evidentes:
@@ -268,6 +313,30 @@ Decisiones que no son evidentes:
   geometría y material, que ahorra memoria pero no llamadas de dibujo: cada `Mesh` seguía
   siendo un envío propio. Las cajas de colisión salen de las mismas cifras que las
   matrices de instancia, no de la escena.
+- **La cámara sigue al agente, y antes no lo hacía aunque lo pareciera.** `follow()`
+  existía y se llamaba cada fotograma, pero un caso especial dentro de `clampToRoom`
+  clavaba la mirada en el centro de la sala en cuanto ésta cabía en pantalla —o sea, casi
+  siempre—. Para sostener ese encuadre, `applyAspect` gastaba hasta 70° de ángulo y 2,2×
+  de distancia, y en un móvil de pie eso dejaba al agente como un punto. Ahora el recorte
+  solo impide que la mirada **se salga de la bóveda**, y el encuadre garantiza una
+  burbuja alrededor del jugador en vez de la sala entera, así que los topes bajan a 62° y
+  1,5×. Lo cubre `npm run validate:movement`.
+  - El recorte **no puede** ir contra la huella de suelo visible: la cámara mira en
+    picado a 53° y su trapecio mide unas 68×40 unidades contra los 24,8 de la sala del
+    nivel 1, así que "que la huella no se salga" centraría siempre. Ese vacío ya se veía
+    antes; lo tapan el plano del vacío y la niebla.
+- **El atrezo importado no colisiona.** Su cantidad sale del preset, o sea que cada
+  jugador ve un número distinto de piezas; si además colisionaran, dos personas en la
+  misma sala tendrían física distinta. La sala que se juega es la de `LayoutGen`.
+- **El material del fantasma va por `onBeforeCompile`, no en un `ShaderMaterial`.** Uno
+  en crudo empieza sin `skinning`, sin niebla, sin `envMap` y sin sombras: habría que
+  reimplementar a mano justo lo que da el modelo con esqueleto. Su
+  `customProgramCacheKey` **incluye el nivel** (`triad-ghost-full`), o cambiar de preset
+  serviría el programa ya compilado del nivel anterior sin ningún error visible.
+- **El entorno de `RoomEnvironment` se normaliza en la fuente.** `envMapIntensity` está
+  calibrado por superficie en tres ficheros distintos (suelo 1,6, muros 0,55, cuerpos
+  0,8); si el entorno nuevo fuese más luminoso habría que tocar los tres y la calibración
+  quedaría partida. Se ajusta `ROOM_EMISSION_SCALE` en `environment.js` y nada más.
 
 En la interfaz, `--accent` lo reescribe `UIManager.applyThemeAccent()` con el color del
 bioma, así que el HUD acompaña al nivel. Los iconos son SVG en `src/ui/icons.js`: los

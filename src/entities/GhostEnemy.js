@@ -1,20 +1,33 @@
 import * as THREE from 'three';
-import { turnTowards } from '../physics/collision.js';
+import { turnTowards, moveWithSlide } from '../physics/collision.js';
 import { TargetSelector } from './ghost/TargetSelector.js';
+import { GhostBrain } from './ghost/GhostBrain.js';
 import { PLAYER_COLORS } from './Player.js';
 import { disposeObject3D } from '../engine/disposal.js';
-import { PALETTE } from '../engine/materials.js';
+import { PALETTE, prepareImportedMaterial } from '../engine/materials.js';
+import { createGhostMaterial, updateGhostMaterial } from '../engine/ghostMaterial.js';
+import { assets, AssetLoader } from '../engine/AssetLoader.js';
+import { ghostModelUrl, GHOST_HEIGHT } from '../assets/manifest.js';
 import { quality } from '../engine/QualitySettings.js';
+import { GHOST_STATES } from '../../shared/events.js';
 import { clamp01, pulse } from '../utils/math.js';
 
 const ATTACK_RANGE = 1.3;
 const ATTACK_COOLDOWN = 1.0;
 
+/**
+ * Radio de colisión mientras acecha.
+ *
+ * Algo mayor que el del jugador (0,4): flota, ocupa más y con el radio del agente se
+ * colaba de refilón por huecos por los que el cuerpo no cabe.
+ */
+const GHOST_RADIUS = 0.55;
+
 /** Suavizado del fantasma remoto, igual que el de los agentes. */
 const REMOTE_LERP = 10;
 
-/** Jirones de la mortaja. Más de siete y se lee como una bola, no como tela. */
-const SHROUD_COUNT = 6;
+/** Mezcla entre clips de animación, en segundos. El mismo valor que usan los agentes. */
+const CROSSFADE = 0.18;
 
 /**
  * El perseguidor.
@@ -36,10 +49,18 @@ const SHROUD_COUNT = 6;
  * Lo simula el cliente que hace de host; los demás solo lo interpolan. El servidor
  * no lo simula, solo arbitra el daño resultante.
  *
- * ## Colisión
+ * ## Colisión: depende de si te ha visto
  *
- * **Atraviesa muros a propósito.** No hay pathfinding, y con él una aparición que
- * respetase la geometría solo parecería un enemigo con la ruta rota.
+ * Antes atravesaba los muros **siempre**, con este argumento: sin pathfinding, una
+ * aparición que respetase la geometría solo parecería un enemigo con la ruta rota. Es
+ * verdad, y lo contrario también: atravesando siempre, la sala deja de significar nada
+ * —no hay nada que hacer con un muro— y el fantasma se reduce a un cronómetro que se
+ * acerca.
+ *
+ * Ahora el reparto lo hace el estado: **acechando** rodea los muros y **cazando o
+ * embistiendo** los atraviesa. Así romper la línea de visión funciona de verdad, ser
+ * visto es el momento en el que todo cambia, y la bóveda vuelve a ser un sitio sin que
+ * el fantasma tenga que usar las puertas. El detalle está en `ghost/GhostBrain.js`.
  */
 export class GhostEnemyEntity {
   /**
@@ -54,8 +75,18 @@ export class GhostEnemyEntity {
     this.speed = 2.5;
     this.damageCooldown = 0;
     this.targetSelector = new TargetSelector();
+    this.brain = new GhostBrain();
     this.targetUid = null;
     this.elapsed = 0;
+
+    /** Rejilla de la sala, para la línea de visión y la ruta del acecho. */
+    this.navGrid = null;
+    /** Campo de flujo hacia la presa. Lo pone `LevelController`, compartido por fantasmas. */
+    this.flowField = null;
+    /** Cajas de colisión de la sala. Solo se consultan acechando. */
+    this.obstacleBoxes = null;
+    /** Vector de trabajo del paso con deslizamiento; se reutiliza cada fotograma. */
+    this.slideStep = new THREE.Vector3();
 
     /** Distancia a su presa en el último fotograma; la usa la capa de tensión. */
     this.distanceToTarget = Infinity;
@@ -69,16 +100,11 @@ export class GhostEnemyEntity {
   }
 
   buildMesh() {
-    // Cuerpo: casi negro, apenas emisivo. Es un vacío con volumen, no una luz.
-    this.coreMat = new THREE.MeshStandardMaterial({
-      color: 0x0a0208,
-      emissive: 0x330008,
-      emissiveIntensity: 0.45,
-      roughness: 0.95,
-      metalness: 0,
-      transparent: true,
-      opacity: 0.92
-    });
+    // El material lleva dentro el borde de fresnel y la disolución, y es **el mismo**
+    // para el modelo importado y para esta silueta de respaldo. Es lo que hace que quien
+    // no haya ejecutado `npm run assets` no vea un fantasma peor, sino el mismo fantasma
+    // con una silueta más simple. Ver `engine/ghostMaterial.js`.
+    this.coreMat = createGhostMaterial(quality.get('ghostShader'));
     this.coreMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55, 1), this.coreMat);
     this.coreMesh.position.y = 1.6;
     // Una sombra que cruza el suelo antes de que veas la criatura.
@@ -87,8 +113,8 @@ export class GhostEnemyEntity {
 
     this.buildOutline();
     this.buildGroundMark();
-    this.buildShroud();
     this.buildEyes();
+    this.attachModel();
 
     // Luz tenue y fría en vez del foco rojo: insinúa la silueta sin revelarla.
     this.light = new THREE.PointLight(0x330011, 1.4, 8);
@@ -160,41 +186,75 @@ export class GhostEnemyEntity {
   }
 
   /**
-   * Jirones que cuelgan del cuerpo.
+   * Cambia la silueta de respaldo por el modelo con esqueleto, si lo hay.
    *
-   * Conos abiertos, sin tapa y a doble cara, con la punta hacia arriba: colgando
-   * bajo el núcleo se leen como tela. Sin escritura de profundidad para que se
-   * atraviesen entre sí en vez de recortarse con bordes duros.
+   * **Asíncrono y sin bloquear nada**, igual que `Player.attachModel`: la silueta de
+   * respaldo está en escena desde el primer fotograma y el modelo la sustituye cuando
+   * llega. Un nivel no puede esperar a una descarga.
+   *
+   * Si no hay modelo declarado en el manifiesto —el estado por defecto— esto no hace
+   * nada y el fantasma se queda como está, con su material completo. Ver `GHOST_MODEL`.
    */
-  buildShroud() {
-    this.shroud = [];
-    if (!quality.get('ghostShroud')) return;
+  async attachModel() {
+    const url = ghostModelUrl();
+    if (!url) return;
 
-    const geometry = new THREE.ConeGeometry(0.34, 1.7, 5, 1, true);
-    this.shroudMat = new THREE.MeshStandardMaterial({
-      color: 0x120310,
-      emissive: 0x2a0010,
-      emissiveIntensity: 0.3,
-      roughness: 1,
-      transparent: true,
-      opacity: 0.38,
-      side: THREE.DoubleSide,
-      depthWrite: false
+    const instance = await assets.instance(url, GHOST_HEIGHT);
+    // La sala pudo terminar mientras se bajaba el modelo.
+    if (!instance || !this.mesh.parent) return;
+
+    instance.root.traverse(child => {
+      if (!child.isMesh) return;
+      // Se le impone el material del fantasma en vez de teñir el suyo: el borde y la
+      // disolución **son** el personaje, y un material de pack no los tiene.
+      child.material = this.coreMat;
+      child.castShadow = quality.get('shadows');
     });
+    prepareImportedMaterial(this.coreMat, { envMapIntensity: 0.35 });
 
-    for (let i = 0; i < SHROUD_COUNT; i++) {
-      const strip = new THREE.Mesh(geometry, this.shroudMat);
-      const angle = (i / SHROUD_COUNT) * Math.PI * 2;
+    this.modelRoot = instance.root;
+    this.mesh.add(this.modelRoot);
 
-      strip.position.set(Math.cos(angle) * 0.28, 1.1, Math.sin(angle) * 0.28);
-      strip.rotation.z = Math.PI; // punta hacia abajo: cuelga
-      strip.userData.phase = i * 1.7;
-      strip.userData.angle = angle;
+    // El núcleo de respaldo se apaga, no se destruye: sigue siendo lo que se ve si algo
+    // sale mal, y el contorno por casco invertido cuelga de su misma geometría.
+    this.coreMesh.visible = false;
+    if (this.outlineMesh) this.outlineMesh.visible = false;
 
-      this.mesh.add(strip);
-      this.shroud.push(strip);
+    this.setupAnimation(instance.root, instance.animations);
+  }
+
+  /**
+   * Reproductor de clips.
+   *
+   * Copia deliberada del de `Player` en vez de una clase base compartida: aquél deduce
+   * el estado de la **velocidad medida** del agente y éste lo recibe de la máquina de
+   * estados, así que una base común necesitaría una estrategia por parámetro y saldría
+   * más larga que las dos juntas. Si se toca uno, mirar el otro.
+   */
+  setupAnimation(root, animations = []) {
+    if (animations.length === 0) return;
+
+    this.mixer = new THREE.AnimationMixer(root);
+    this.actions = {};
+
+    for (const state of ['idle', 'run', 'attack']) {
+      const clip = AssetLoader.findClip(animations, state);
+      if (clip) this.actions[state] = this.mixer.clipAction(clip);
     }
-    this.shroudGeometry = geometry;
+
+    this.play('idle');
+  }
+
+  play(name) {
+    if (!this.actions) return;
+    // Un modelo sin clip de ataque embiste con el de correr: es el que ya expresa prisa,
+    // y quedarse congelado sería peor que repetir una animación.
+    const next = this.actions[name] || this.actions.run || this.actions.idle;
+    if (!next || next === this.current) return;
+
+    next.reset().fadeIn(CROSSFADE).play();
+    if (this.current) this.current.fadeOut(CROSSFADE);
+    this.current = next;
   }
 
   /**
@@ -240,6 +300,9 @@ export class GhostEnemyEntity {
     // De 0 en el nivel 15 a 1 en el 40.
     const pressure = clamp01((level - 15) / 25);
     this.targetSelector.setAggression(pressure);
+    // La misma presión recorta la paciencia del acecho: a nivel alto deja de rondar y
+    // entra a por ti aunque no te haya visto. Ver `GhostBrain.patience`.
+    this.brain.setPressure(pressure);
   }
 
   spawnAt(x, z) {
@@ -247,8 +310,30 @@ export class GhostEnemyEntity {
     this.remoteTarget.set(x, 0, z);
     this.hasRemoteTarget = false;
     this.targetSelector.reset();
+    this.brain.reset();
     this.targetUid = null;
     this.distanceToTarget = Infinity;
+  }
+
+  /** La sala en la que caza: rejilla para ver y muros para rodear. */
+  setLevel({ navGrid, obstacleBoxes }) {
+    this.navGrid = navGrid || null;
+    this.obstacleBoxes = obstacleBoxes || null;
+  }
+
+  /**
+   * Estado que llega del host, en los clientes que no simulan.
+   *
+   * Es el único dato del fantasma que **no** se puede deducir de su posición: la
+   * animación, el borde encendido y la disolución tienen que coincidir en las tres
+   * pantallas, y desde fuera no hay forma de saber si lo que se ve acercarse es una
+   * carga o un paseo rápido.
+   */
+  setRemoteState(state) {
+    if (state === undefined || state === this.brain.state) return;
+    this.brain.state = state;
+    this.brain.charge = state === GHOST_STATES.CHARGE ? 1 : 0;
+    this.play(state === GHOST_STATES.CHARGE ? 'attack' : state === GHOST_STATES.HUNT ? 'run' : 'idle');
   }
 
   /** Estado que llega del host. Se interpola en `updateRemote`, no se teletransporta. */
@@ -310,19 +395,18 @@ export class GhostEnemyEntity {
       this.groundMark.scale.set(scale, scale, 1);
     }
 
-    // La mortaja ondea: cada jirón con su fase, o los seis laten a la vez y se lee
-    // como un objeto rígido que se hincha.
-    this.shroud.forEach(strip => {
-      const wave = pulse(this.elapsed, 1.6, strip.userData.phase);
-      strip.scale.y = 0.85 + wave * 0.35;
-      strip.rotation.x = Math.sin(this.elapsed * 1.1 + strip.userData.phase) * 0.16;
-      strip.position.y = 1.1 + wave * 0.1;
-    });
+    // El reloj y la carga del material: es lo que deshilacha el bajo del cuerpo y
+    // enciende el borde al cargar la embestida. Sustituye a los seis conos de tela que
+    // colgaban de aquí, y a diferencia de ellos no cuesta ninguna llamada de dibujo.
+    updateGhostMaterial(this.coreMat, this.elapsed, this.brain.charge);
+    if (this.mixer) this.mixer.update(delta);
 
-    // La luz respira, más deprisa cuanto más cerca está de su presa.
+    // La luz respira, más deprisa cuanto más cerca está de su presa. Embistiendo se
+    // dispara: es el aviso de que ya no hay nada que negociar.
     if (this.light) {
       const beat = pulse(this.elapsed, 2 + closeness * 6);
-      this.light.intensity = this.baseLightIntensity * (0.6 + beat * 0.5 + closeness * 0.5);
+      const surge = 1 + this.brain.charge * 1.6;
+      this.light.intensity = this.baseLightIntensity * (0.6 + beat * 0.5 + closeness * 0.5) * surge;
     }
   }
 
@@ -347,7 +431,7 @@ export class GhostEnemyEntity {
 
     this.distanceToTarget = target.distance;
     this.setTargetIndicator(target.player.uid, players);
-    this.moveTowards(target.player.position, delta);
+    this.hunt(delta, target);
 
     if (this.damageCooldown > 0) {
       this.damageCooldown -= delta;
@@ -379,29 +463,117 @@ export class GhostEnemyEntity {
     return this.targetSelector.update(players, this.mesh.position, delta, roomRange);
   }
 
-  /** Avanza en línea recta hacia el objetivo, atravesando la geometría. */
-  moveTowards(targetPosition, delta) {
-    const dx = targetPosition.x - this.mesh.position.x;
-    const dz = targetPosition.z - this.mesh.position.z;
-    const lengthSq = dx * dx + dz * dz;
-    if (lengthSq < 0.01) return;
+  /**
+   * Decide el estado y da el paso que le toca.
+   *
+   * La máquina de estados solo devuelve **qué** hacer; traducirlo a una dirección de
+   * mundo es cosa de aquí, porque es lo único que necesita conocer la rejilla y la
+   * escena. Ver `ghost/GhostBrain.js`.
+   */
+  hunt(delta, target) {
+    const position = this.mesh.position;
+    const dx = target.player.position.x - position.x;
+    const dz = target.player.position.z - position.z;
+    const length = Math.hypot(dx, dz) || 1;
+    const toTarget = { x: dx / length, z: dz / length };
 
-    const length = Math.sqrt(lengthSq);
-    const step = Math.min(this.speed * delta, length);
+    // Sin rejilla —una sala aún sin construir— se comporta como siempre lo hizo: recto y
+    // atravesando. Es el respaldo, no el caso normal.
+    const visible = this.navGrid
+      ? this.navGrid.hasLineOfSight(position.x, position.z, target.player.position.x, target.player.position.z)
+      : true;
 
-    this.mesh.position.x += (dx / length) * step;
-    this.mesh.position.z += (dz / length) * step;
+    const plan = this.brain.update(delta, target.distance, visible, toTarget);
+    this.play(plan.state === GHOST_STATES.CHARGE ? 'attack' : plan.state === GHOST_STATES.HUNT ? 'run' : 'idle');
 
-    // Gira progresivamente, como el jugador; antes el ángulo se asignaba de golpe
-    // y el fantasma cambiaba de orientación de un fotograma a otro.
-    this.mesh.rotation.y = turnTowards(this.mesh.rotation.y, Math.atan2(dx, dz), delta, 6);
+    if (plan.speedScale === 0) return;
+
+    // Acechando sigue el campo de flujo, que rodea los muros; en los demás estados va
+    // recto. La embestida usa su dirección congelada y no la recalcula.
+    const direction = plan.direction
+      || (plan.pathfinding ? this.stalkDirection(toTarget) : toTarget);
+
+    this.step(direction, this.speed * plan.speedScale * delta, target.distance, plan, delta);
+  }
+
+  /**
+   * Siguiente paso del acecho, leído del campo de flujo.
+   *
+   * Se mira la celda vecina de menor distancia y se apunta a su centro. Con eso basta:
+   * el campo ya contiene la ruta entera, así que no hay nada que recorrer ni recordar.
+   * Sin campo —o en una celda desde la que no se llega— cae a la línea recta.
+   */
+  stalkDirection(fallback) {
+    if (!this.navGrid || !this.flowField) return fallback;
+
+    const here = this.navGrid.toCell(this.mesh.position.x, this.mesh.position.z);
+    let best = null;
+    let bestDistance = this.flowField[this.navGrid.index(here.col, here.row)] ?? Infinity;
+
+    for (const [c, r] of [[here.col + 1, here.row], [here.col - 1, here.row],
+      [here.col, here.row + 1], [here.col, here.row - 1]]) {
+      if (!this.navGrid.inBounds(c, r)) continue;
+      const distance = this.flowField[this.navGrid.index(c, r)];
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { col: c, row: r };
+      }
+    }
+    if (!best) return fallback;
+
+    const world = this.navGrid.toWorld(best.col, best.row);
+    const dx = world.x - this.mesh.position.x;
+    const dz = world.z - this.mesh.position.z;
+    const length = Math.hypot(dx, dz) || 1;
+    return { x: dx / length, z: dz / length };
+  }
+
+  /**
+   * Un paso en una dirección, girando el cuerpo hacia ella.
+   *
+   * Acechando el paso pasa por el mismo deslizamiento contra muros que usa el jugador;
+   * en los demás estados atraviesa. El giro es progresivo, como el del agente: antes el
+   * ángulo se asignaba de golpe y el fantasma cambiaba de orientación de un fotograma
+   * a otro.
+   */
+  step(direction, distance, remaining, plan, delta) {
+    // Cazando y embistiendo no se pasa de largo de la presa; acechando sí puede, porque
+    // la ruta rodea y el último tramo no apunta a ella.
+    const travel = plan.pathfinding ? distance : Math.min(distance, remaining);
+    if (travel <= 0) return;
+
+    if (plan.pathfinding && this.obstacleBoxes) {
+      // El mismo deslizamiento que usa el jugador: sin él, la ruta del campo de flujo
+      // corta las esquinas y el fantasma se queda enganchado en el canto de un muro.
+      this.slideStep.set(direction.x * travel, 0, direction.z * travel);
+      moveWithSlide(this.mesh.position, this.slideStep, this.obstacleBoxes, GHOST_RADIUS);
+    } else {
+      this.mesh.position.x += direction.x * travel;
+      this.mesh.position.z += direction.z * travel;
+    }
+
+    this.mesh.rotation.y = turnTowards(
+      this.mesh.rotation.y,
+      Math.atan2(direction.x, direction.z),
+      delta,
+      // Embistiendo apenas gira: la dirección está congelada y girar el cuerpo hacia la
+      // presa haría que pareciese un misil teledirigido en vez de una carga recta.
+      plan.state === GHOST_STATES.CHARGE ? 0.6 : 6
+    );
   }
 
   destroy() {
+    // El mixer guarda referencias a las pistas del modelo clonado: sin soltarlas, cada
+    // sala deja atrás un esqueleto entero. Es lo mismo que hace `Player.dispose`.
+    if (this.mixer) {
+      this.mixer.stopAllAction();
+      if (this.modelRoot) this.mixer.uncacheRoot(this.modelRoot);
+      this.mixer = null;
+    }
+
     disposeObject3D(this.mesh, this.scene);
     // Geometrías compartidas entre los hijos: el recorrido las libera al toparse
     // con la primera malla, y disponer de más es un no-op inofensivo.
-    if (this.shroudGeometry) this.shroudGeometry.dispose();
     if (this.eyeGeometry) this.eyeGeometry.dispose();
   }
 }

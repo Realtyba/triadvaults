@@ -2,8 +2,19 @@ import * as THREE from 'three';
 import { quality } from './QualitySettings.js';
 import { PALETTE } from './materials.js';
 
-/** Semiancho del frustum ortográfico de sombra, en unidades de mundo. */
-const SHADOW_EXTENT = 35;
+/**
+ * Semiancho del frustum ortográfico de sombra, en unidades de mundo.
+ *
+ * Estaba en 35 —la sala más grande entera— porque el volumen estaba **clavado en el
+ * origen del mundo** y tenía que cubrir la bóveda completa desde ahí. Ahora sigue a la
+ * cámara (`setShadowFocus`), así que solo necesita cubrir lo que se ve: la mitad de
+ * extensión reparte los mismos téxeles en la mitad de mundo, o sea sombras el doble de
+ * finas sin tocar `shadowMapSize` ni gastar un byte más de memoria.
+ */
+const SHADOW_EXTENT = 20;
+
+/** Desplazamiento de la luz clave respecto a lo que ilumina. Fija su dirección. */
+const LIGHT_OFFSET = { x: 28, y: 34, z: 20 };
 
 /** Factor del sesgo por téxel; calibrado para que 1024 dé el valor que ya funcionaba. */
 const BIAS_PER_TEXEL = 0.015;
@@ -34,10 +45,18 @@ export class EngineLighting {
     // Clave principal. Más rasante que antes, para que los muros proyecten
     // sombras largas y la sala tenga profundidad.
     this.dirLight = new THREE.DirectionalLight(0xdfe8ff, 1.15);
-    this.dirLight.position.set(28, 34, 20);
+    this.dirLight.position.set(LIGHT_OFFSET.x, LIGHT_OFFSET.y, LIGHT_OFFSET.z);
     this.dirLight.castShadow = quality.get('shadows');
     this.configureShadow();
     this.scene.add(this.dirLight);
+
+    // Una luz direccional apunta a su `target`, y por defecto ése es un objeto suelto
+    // en el origen. Para poder mover el volumen de sombra hay que darle un objetivo
+    // propio **y meterlo en la escena**: si no está, su matriz de mundo no se actualiza
+    // y la luz sigue apuntando a donde estaba.
+    this.shadowFocus = new THREE.Object3D();
+    this.scene.add(this.shadowFocus);
+    this.dirLight.target = this.shadowFocus;
 
     // Contraluz tenue del lado opuesto: despega a los personajes del fondo.
     this.rimLight = new THREE.DirectionalLight(0xff0077, 0.35);
@@ -81,6 +100,37 @@ export class EngineLighting {
 
     shadow.bias = -0.6 * texelWorldSize * BIAS_PER_TEXEL;
     shadow.normalBias = Math.max(0.01, texelWorldSize * 0.6);
+  }
+
+  /**
+   * Centra el volumen de sombra sobre un punto del suelo. Lo llama el bucle de juego
+   * con la posición del agente local.
+   *
+   * ## El redondeo a téxel no es un pulido, es el requisito
+   *
+   * El mapa de sombra es una rejilla fija de téxeles proyectada sobre el mundo. Si el
+   * volumen se desplaza una cantidad cualquiera, cada borde de sombra cae en un trozo
+   * distinto de téxel en cada fotograma y el resultado es que **las sombras hierven**:
+   * los contornos vibran aunque no se mueva nada en la escena. Es un defecto que se
+   * atribuye a cualquier cosa menos a la causa, así que conviene no estrenarlo.
+   *
+   * Redondeando el centro a múltiplos del téxel, el mapa se desplaza de téxel en téxel
+   * y cada borde cae siempre en el mismo sitio: la sombra se queda quieta.
+   *
+   * La **dirección** de la luz no cambia nunca. Se mueven a la vez el objetivo y la
+   * posición, conservando `LIGHT_OFFSET`: si solo se moviera uno, la sala se iría
+   * iluminando desde un ángulo distinto según por dónde anduviera el jugador.
+   */
+  setShadowFocus(x, z) {
+    if (!this.dirLight.castShadow) return;
+
+    const texel = (SHADOW_EXTENT * 2) / quality.get('shadowMapSize');
+    const fx = Math.round(x / texel) * texel;
+    const fz = Math.round(z / texel) * texel;
+
+    this.shadowFocus.position.set(fx, 0, fz);
+    this.shadowFocus.updateMatrixWorld();
+    this.dirLight.position.set(fx + LIGHT_OFFSET.x, LIGHT_OFFSET.y, fz + LIGHT_OFFSET.z);
   }
 
   applyQuality() {
@@ -150,6 +200,7 @@ export class EngineLighting {
 
   destroy() {
     this.clearCornerLights();
+    this.scene.remove(this.shadowFocus);
     if (this.unsubscribeQuality) this.unsubscribeQuality();
   }
 }

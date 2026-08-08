@@ -62,6 +62,14 @@ export class AssetLoader {
   load(url) {
     if (this.failed.has(url)) return Promise.resolve(null);
 
+    // Fuera del navegador no hay nada que cargar y sí mucho que ensuciar.
+    // `scripts/check-leaks.js` construye diez niveles enteros en Node, y desde que el
+    // fantasma pide su modelo al nacer, `GLTFLoader` —que por dentro es
+    // `XMLHttpRequest`— fallaba treinta veces. El fallo lo absorbía el `catch` de abajo,
+    // así que no rompía nada, pero llenaba la salida de la validación de avisos que no
+    // significan nada. Cortarlo aquí, en el cargador, y no en cada llamante.
+    if (typeof XMLHttpRequest === 'undefined') return Promise.resolve(null);
+
     if (!this.pending.has(url)) {
       const promise = this.loader
         .loadAsync(url)

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { moveWithSlide, turnTowards } from '../physics/collision.js';
 import { disposeObject3D } from '../engine/disposal.js';
-import { PALETTE, neonMaterial, darkBodyMaterial } from '../engine/materials.js';
+import { PALETTE, neonMaterial, darkBodyMaterial, prepareImportedMaterial } from '../engine/materials.js';
 import { clamp01 } from '../utils/math.js';
 import { quality } from '../engine/QualitySettings.js';
 import { AssetLoader, assets } from '../engine/AssetLoader.js';
@@ -188,6 +188,11 @@ export class PlayerEntity {
       if (!child.isMesh) return;
       const materials = Array.isArray(child.material) ? child.material : [child.material];
       materials.forEach(material => {
+        // Lo primero es integrarlo en la iluminación de la sala; el tinte va encima.
+        // Ver `prepareImportedMaterial`: sin ello el agente reflejaba el entorno al
+        // doble que los muros que tiene al lado.
+        prepareImportedMaterial(material);
+
         if (!material.emissive) return;
         material.emissive.copy(accent);
         material.emissiveIntensity = 0.55;

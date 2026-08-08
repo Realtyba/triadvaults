@@ -8,6 +8,20 @@
  */
 export const CELL_SIZE = 2;
 
+/**
+ * Marca de "aquí no se llega" en un campo de flujo.
+ *
+ * Es el máximo de un `Uint16Array`, así que la comparación "más cerca que" ya descarta
+ * sola las celdas inalcanzables sin necesidad de un caso aparte.
+ */
+export const UNREACHABLE = 0xffff;
+
+/**
+ * Margen para decidir que un rayo pasa por un vértice de la rejilla, en fracción del
+ * segmento. Ver `hasLineOfSight`.
+ */
+const CROSSING_EPSILON = 1e-9;
+
 export class NavGrid {
   constructor(cols, rows, cellSize = CELL_SIZE) {
     this.cols = cols;
@@ -98,6 +112,137 @@ export class NavGrid {
   isReachable(col, row) {
     if (!this.reachable || !this.inBounds(col, row)) return false;
     return this.reachable[this.index(col, row)] === 1;
+  }
+
+  // -------------------------------------------------------- caza del fantasma
+
+  /**
+   * ¿Se ven dos puntos del mundo sin muro por medio?
+   *
+   * Es lo que decide si el fantasma te ha visto, y por tanto si acecha rodeando la sala
+   * o entra a por ti. Con esto, **romper la línea de visión funciona**: un muro deja de
+   * ser decoración y pasa a ser algo que se puede usar.
+   *
+   * ## Tiene que ser simétrico, y por eso no es un Bresenham
+   *
+   * Ver es recíproco: si el fantasma te ve desde su esquina, tú lo ves desde la tuya. Un
+   * Bresenham no cumple eso —su regla de desempate depende de por dónde se empieza, así
+   * que A→B y B→A recorren celdas distintas cuando la línea pasa cerca de un canto—, y
+   * el resultado sería un fantasma que a veces te ve a través de una pared por la que tú
+   * no lo ves. Es un fallo que en la pantalla se lee como "el bicho hace trampas".
+   *
+   * Lo que se usa es el recorrido de vóxeles de Amanatides–Woo: avanza por el eje cuyo
+   * siguiente corte con la rejilla esté **más cerca a lo largo del rayo**. Ese criterio
+   * es geométrico, no depende del sentido, y por tanto es simétrico por construcción.
+   *
+   * Nada de `Raycaster`: en el repositorio no hay ninguno, esto es aritmética sobre la
+   * rejilla que ya existe, y estrenar uno traería la escena de Three.js a un módulo que a
+   * propósito no la conoce —y que por eso se valida sin navegador—.
+   */
+  hasLineOfSight(ax, az, bx, bz) {
+    // A coordenadas continuas de rejilla: la celda (c, r) ocupa [c, c+1) × [r, r+1).
+    const x0 = ax / this.cellSize + this.cols / 2;
+    const y0 = az / this.cellSize + this.rows / 2;
+    const x1 = bx / this.cellSize + this.cols / 2;
+    const y1 = bz / this.cellSize + this.rows / 2;
+
+    let col = Math.floor(x0);
+    let row = Math.floor(y0);
+    const endCol = Math.floor(x1);
+    const endRow = Math.floor(y1);
+    if (this.isBlocked(col, row)) return false;
+
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const stepCol = Math.sign(dx);
+    const stepRow = Math.sign(dy);
+
+    // Cuánto avanza el parámetro del rayo al cruzar una celda entera en cada eje, y
+    // cuánto falta para el primer cruce. Sin movimiento en un eje, nunca se cruza.
+    const deltaX = dx !== 0 ? 1 / Math.abs(dx) : Infinity;
+    const deltaY = dy !== 0 ? 1 / Math.abs(dy) : Infinity;
+    let nextX = dx !== 0 ? (dx > 0 ? col + 1 - x0 : x0 - col) / Math.abs(dx) : Infinity;
+    let nextY = dy !== 0 ? (dy > 0 ? row + 1 - y0 : y0 - row) / Math.abs(dy) : Infinity;
+
+    // Tope de seguridad: no puede visitar más celdas que tiene la rejilla.
+    let guard = this.cols + this.rows + 2;
+
+    while (guard-- > 0) {
+      if (col === endCol && row === endRow) return true;
+
+      // El empate se compara con tolerancia y no con `===`.
+      //
+      // Los dos parámetros se van acumulando (`+= delta`), así que al llegar a un vértice
+      // de la rejilla el mismo cruce sale como 0,4999999999999999 en un sentido y como
+      // 0,5 en el otro. Con una comparación exacta, un sentido cruzaba en diagonal y el
+      // otro daba dos pasos rectos por celdas distintas: justo la asimetría que este
+      // recorrido venía a evitar. Ambos parámetros recorren de 0 a 1 sobre el segmento,
+      // así que la tolerancia es directamente comparable.
+      if (Math.abs(nextX - nextY) > CROSSING_EPSILON) {
+        if (nextX < nextY) {
+          col += stepCol;
+          nextX += deltaX;
+        } else {
+          row += stepRow;
+          nextY += deltaY;
+        }
+      } else {
+        // El rayo pasa justo por un vértice de la rejilla. Se cruza en diagonal, y solo
+        // se considera tapado si **las dos** celdas del canto lo están: por una rendija
+        // diagonal entre dos muros se ve, y tratarla como pared cerraría huecos que a
+        // ojo están abiertos.
+        if (this.isBlocked(col + stepCol, row) && this.isBlocked(col, row + stepRow)) return false;
+        col += stepCol;
+        row += stepRow;
+        nextX += deltaX;
+        nextY += deltaY;
+      }
+
+      if (this.isBlocked(col, row)) return false;
+    }
+
+    return false;
+  }
+
+  /**
+   * Campo de distancias hasta una celda, en saltos, por anchura.
+   *
+   * Es el sustituto del pathfinding para el estado de acecho, y es un **campo de flujo**
+   * y no un A\* por dos motivos. El primero es el tamaño: la rejilla más grande del juego
+   * son 18×18 = 324 celdas, así que recorrerla entera cuesta menos que montar la cola de
+   * prioridad que pediría A\*. El segundo es que un campo **sirve a la vez a todos los
+   * fantasmas que persigan a la misma presa**: se calcula una vez por objetivo y no una
+   * por perseguidor.
+   *
+   * Quien lo use solo tiene que mirar sus cuatro vecinas y quedarse con la de menor
+   * distancia. Ver `GhostBrain`.
+   *
+   * @returns {Uint16Array} distancia por celda; `UNREACHABLE` donde no se llega
+   */
+  computeFlowField(targetCol, targetRow) {
+    const field = new Uint16Array(this.cols * this.rows).fill(UNREACHABLE);
+    if (!this.inBounds(targetCol, targetRow) || this.isBlocked(targetCol, targetRow)) return field;
+
+    field[this.index(targetCol, targetRow)] = 0;
+    // Cola con índice de lectura en vez de `shift()`: sacar por delante de un array de
+    // JavaScript es lineal, y con 324 celdas eso convierte un recorrido en cuadrático.
+    const queue = [targetCol, targetRow];
+
+    for (let head = 0; head < queue.length; head += 2) {
+      const col = queue[head];
+      const row = queue[head + 1];
+      const distance = field[this.index(col, row)] + 1;
+
+      for (const [c, r] of [[col + 1, row], [col - 1, row], [col, row + 1], [col, row - 1]]) {
+        if (!this.inBounds(c, r) || this.isBlocked(c, r)) continue;
+        const idx = this.index(c, r);
+        if (field[idx] !== UNREACHABLE) continue;
+        field[idx] = distance;
+        queue.push(c, r);
+      }
+    }
+
+    return field;
   }
 
   /**

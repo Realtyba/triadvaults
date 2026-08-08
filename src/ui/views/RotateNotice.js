@@ -14,10 +14,20 @@ import { icon } from '../icons.js';
  * ## Por qué solo en partida
  *
  * El menú, el perfil y la lista de salas están pensados en vertical y se leen bien así.
- * Lo que no cabe en vertical es la bóveda: la cámara compensa las ventanas estrechas
- * abriendo el ángulo y alejándose (`EngineCamera.applyAspect`), y en un móvil de pie
- * eso llega al tope y deja al agente como un punto. Obligar a girar en el menú sería
- * molestar sin ganar nada.
+ * Lo que no cabe en vertical es la partida. Obligar a girar en el menú sería molestar
+ * sin ganar nada.
+ *
+ * ## El motivo cambió, el aviso no
+ *
+ * Antes el argumento era el encuadre: la cámara tenía que meter la bóveda entera en la
+ * ventana, en vertical llegaba a su tope de ángulo y distancia, y el agente quedaba como
+ * un punto. Desde que la cámara **sigue al agente** en vez de encuadrar la sala, ese
+ * problema no existe: en vertical se ve menos sala, pero el personaje conserva su tamaño.
+ *
+ * Lo que sigue sin caber es la interfaz. En vertical, la barra de estado del equipo, la
+ * de vida y el joystick se disputan un ancho que no da: `styles.css` ya desplaza la vida
+ * para esquivar el pulgar, y eso es lo máximo que se puede repartir. El aviso se queda
+ * por eso, y los textos lo dicen así.
  */
 export class RotateNotice extends View {
   static keys = ['isPortrait', 'isTouch', 'view', 'lang'];

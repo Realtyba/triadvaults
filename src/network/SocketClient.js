@@ -159,7 +159,11 @@ export class SocketClient {
           y: ghost.mesh.position.y,
           z: ghost.mesh.position.z
         },
-        targetUid: ghost.targetUid || null
+        targetUid: ghost.targetUid || null,
+        // Lo único que no se deduce de la posición: si lo que se ve venir es un paseo o
+        // una carga. La animación, el borde encendido y la disolución dependen de esto,
+        // y tienen que coincidir en las tres pantallas. Ver `GHOST_STATES`.
+        state: ghost.brain.state
       }))
     });
   }

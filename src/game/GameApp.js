@@ -11,7 +11,7 @@ import { AmbientScene } from './AmbientScene.js';
 import { LevelController } from './LevelController.js';
 import { PlayerRegistry } from './PlayerRegistry.js';
 import { NetworkBridge } from './NetworkBridge.js';
-import { GHOST_DAMAGE } from '../../shared/events.js';
+import { GHOST_DAMAGE, GHOST_STATES } from '../../shared/events.js';
 import { falloff } from '../utils/math.js';
 import { quality } from '../engine/QualitySettings.js';
 import { PALETTE } from '../engine/materials.js';
@@ -35,6 +35,11 @@ const GHOST_SEND_HZ = 15;
  */
 const FRAME_BUDGET_MS = 1000 / 60;
 const FRAME_TOLERANCE_MS = 2;
+
+/** Un color de Three.js como cadena CSS. Los marcadores de borde son DOM, no escena. */
+function hexColor(value) {
+  return `#${value.toString(16).padStart(6, '0')}`;
+}
 
 export class GameApp {
   constructor(container) {
@@ -65,6 +70,7 @@ export class GameApp {
     this.moveAccumulator = 0;
     this.ghostAccumulator = 0;
     this.hudAccumulator = 0;
+    this.edgeAccumulator = 0;
 
     this.ambient = new AmbientScene({
       scene: this.renderer.scene,
@@ -141,6 +147,16 @@ export class GameApp {
       this.players.placeAll(index => this.level.spawnFor(index));
     } else {
       this.players.createSolo(this.level.spawnFor(0));
+    }
+
+    // Va aquí y no junto a `camera.reset()`: hasta esta línea no hay agente local del
+    // que copiar la posición. Sin esto, la cámara entra al nivel desde la órbita del
+    // menú y el primer par de segundos son un vuelo de aproximación durante el cual ya
+    // se puede jugar. Ver `EngineCamera.snapTo`.
+    const local = this.players.local;
+    if (local) {
+      this.camera.snapTo(local.getPosition());
+      this.lighting.setShadowFocus(local.getPosition().x, local.getPosition().z);
     }
 
     this.sound.startBGM();
@@ -242,6 +258,12 @@ export class GameApp {
       this.ui.setHealth(health);
       this.ui.onLocalRespawn();
       this.camera.reset();
+      // Reaparecer es un salto, no un desplazamiento: la celda de reaparición está lejos
+      // de donde caíste. Con la cámara siguiendo al agente, dejar que `follow` cubra esa
+      // distancia amortiguada sería un barrido por media sala justo cuando el jugador
+      // vuelve a tener el control.
+      this.camera.snapTo(entity.getPosition());
+      this.lighting.setShadowFocus(spawn.x, spawn.z);
     }
   }
 
@@ -278,6 +300,7 @@ export class GameApp {
       if (!ghost) return;
 
       ghost.setPosition(state.position);
+      ghost.setRemoteState(state.state);
       if (ghost.targetUid !== state.targetUid) {
         if (!snapshot) snapshot = this.players.snapshot();
         ghost.setTargetIndicator(state.targetUid, snapshot);
@@ -402,7 +425,13 @@ export class GameApp {
         local.update(delta, this.input.getMovementVector(this.camera.getGroundBasis()), this.level.obstacleBoxes);
         this.throttledSendMove(delta, local);
       }
-      this.camera.follow(local.getPosition(), delta);
+      const position = local.getPosition();
+      this.camera.follow(position, delta);
+      // El volumen de sombra va con el jugador, no con el origen del mundo: ver
+      // `EngineLighting.setShadowFocus`. Se le pasa la posición del agente y no la de
+      // la cámara porque es lo que está en el centro del encuadre, y porque así el
+      // redondeo a téxel no depende del suavizado.
+      this.lighting.setShadowFocus(position.x, position.z);
     }
 
     this.players.updateRemotes(delta);
@@ -412,7 +441,65 @@ export class GameApp {
     this.updateGhosts(delta, snapshot);
     this.updatePuzzle(snapshot, local, delta);
     this.updateTension(delta, local);
+    this.throttledEdgeMarkers(delta, local);
     this.throttledHudUpdate(delta);
+  }
+
+  /**
+   * Señala en el borde de la pantalla lo que se ha quedado fuera de encuadre.
+   *
+   * Se estrangula por preset y no por fotograma: es información, no animación, y a 12
+   * actualizaciones por segundo un marcador ya se lee como que acompaña al objetivo.
+   * Lo que se ahorra no son llamadas de dibujo —no cuesta ninguna— sino cinco
+   * proyecciones y cinco escrituras de estilo en el teléfono más lento.
+   */
+  throttledEdgeMarkers(delta, local) {
+    if (!local) return;
+
+    this.edgeAccumulator += delta;
+    const period = 1 / quality.get('edgeMarkerHz');
+    if (this.edgeAccumulator < period) return;
+    this.edgeAccumulator = 0;
+
+    this.ui.edgeMarkers.update(this.camera.camera, this.collectOffscreenTargets(local));
+  }
+
+  /**
+   * Qué merece un marcador de borde.
+   *
+   * Los compañeros vivos, siempre y con su color de agente: es la misma señal que su
+   * anillo de suelo, y en los puzles de placas simultáneas saber dónde está el otro
+   * **es** la mecánica.
+   *
+   * Los fantasmas, no todos. El que te persigue a ti, siempre; los ajenos, solo dentro
+   * del alcance en el que ya se oyen. Marcarlos todos a todas horas sería un radar, y
+   * un radar desmonta la tensión que construyen `updateTension` y el latido: lo que da
+   * miedo es no saber por dónde anda, y esto solo pretende que no te maten por algo que
+   * habrías visto de estar la cámara donde estaba antes.
+   */
+  collectOffscreenTargets(local) {
+    const targets = this.edgeTargets || (this.edgeTargets = []);
+    targets.length = 0;
+
+    for (const entity of this.players.list()) {
+      if (entity.isLocal || !entity.alive) continue;
+      targets.push({ position: entity.getPosition(), color: hexColor(entity.colorHex) });
+    }
+
+    const position = local.getPosition();
+    for (const ghost of this.level.ghosts) {
+      const mine = ghost.targetUid && String(ghost.targetUid) === String(this.socket.uid);
+      if (!mine && ghost.mesh.position.distanceTo(position) > GameApp.TENSION_RANGE) continue;
+      targets.push({
+        position: ghost.mesh.position,
+        color: hexColor(PALETTE.GHOST_AURA),
+        // Embistiendo el marcador parpadea. Es el único momento en el que un aviso de
+        // borde tiene derecho a pedir que le mires.
+        urgent: mine && ghost.brain.state === GHOST_STATES.CHARGE
+      });
+    }
+
+    return targets;
   }
 
   /** Timer, modo de entrada y estado de los compañeros van a ~2 Hz: no hace falta más. */
@@ -461,6 +548,14 @@ export class GameApp {
    * suavizan solos y actualizarlos 60 veces por segundo no cambia nada de lo que
    * se oye, solo gasta.
    */
+  /** ¿Hay un fantasma embistiendo contra el agente de esta pantalla? */
+  isChargingAtLocal() {
+    return this.level.ghosts.some(
+      ghost => ghost.brain.state === GHOST_STATES.CHARGE
+        && ghost.targetUid && String(ghost.targetUid) === String(this.socket.uid)
+    );
+  }
+
   updateTension(delta, local) {
     // La sacudida por cercanía sí va por fotograma: a 5 Hz se sentiría como tirones.
     this.updateProximityShake(delta, local);
@@ -478,7 +573,10 @@ export class GameApp {
 
     const distance = this.nearestGhostDistance(local.getPosition());
     const proximity = falloff(distance, GameApp.TENSION_RANGE);
-    const tension = proximity * proximity; // al cuadrado: solo aprieta de cerca
+    // Al cuadrado: solo aprieta de cerca. Salvo embistiendo, donde la distancia deja de
+    // importar —la embestida se **oye** llegar, y para cuando la distancia bajara sola
+    // ya sería tarde para que el aviso sirviera de algo—.
+    const tension = this.isChargingAtLocal() ? 1 : proximity * proximity;
 
     this.sound.setTension(tension);
     // El latido acompaña a la música en vez de sustituirla: es la señal que se
@@ -539,13 +637,24 @@ export class GameApp {
     const range = this.level.roomRange;
     const onHit = this.onGhostHitBound || (this.onGhostHitBound = uid => this.onGhostHit(uid));
 
+    // Las rutas del acecho, antes de mover a nadie: un campo por presa, compartido por
+    // los fantasmas que vayan a por ella. Ver `LevelController.updateFlowFields`.
+    this.level.updateFlowFields(snapshot);
+
     for (const ghost of ghosts) {
       const previous = ghost.targetUid;
+      const wasStalking = ghost.brain.state === GHOST_STATES.STALK;
       const targetUid = ghost.update(delta, snapshot, onHit, range);
+      const mine = targetUid && targetUid === this.socket.uid;
 
-      // Solo cuando el objetivo pasa a ser el jugador de esta pantalla: un aviso
-      // que sonara con cada cambio ajeno dejaría de significar nada.
-      if (targetUid !== previous && targetUid && targetUid === this.socket.uid) {
+      // El aviso suena cuando **te ve**, no cuando cambia de presa.
+      //
+      // Antes se disparaba con el cambio de objetivo, que con un fantasma asignado por
+      // agente ocurre una vez por nivel y casi siempre antes de que pase nada. Ahora
+      // marca la transición de acechar a cazar, que es el instante en el que el juego
+      // cambia: hasta ahí rodeaba muros, a partir de ahí viene en línea recta y los
+      // atraviesa. Es el momento que hay que oír.
+      if (mine && wasStalking && ghost.brain.state !== GHOST_STATES.STALK) {
         this.sound.playTargetLocked();
         this.renderer.flash(0.25, PALETTE.DANGER);
       }

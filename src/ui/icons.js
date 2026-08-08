@@ -34,6 +34,10 @@ const ICONS = {
   touch: '<path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M12 11V9.5a1.5 1.5 0 0 1 3 0V11"/><path d="M15 11v-.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-5.2-3l-2-3.5a1.5 1.5 0 0 1 2.6-1.5L9 15"/>',
   pause: '<rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/>',
   zoom: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.2 15.2L21 21"/><path d="M7.5 10.5h6"/><path d="M10.5 7.5v6"/>',
+  // Punta hacia la **derecha** (+X) y centrada en la caja: los marcadores de borde la
+  // giran con `atan2`, y ese ángulo se mide desde +X. Cualquier otra orientación de
+  // partida obligaría a sumar un desfase en el código que la usa.
+  marker: '<path d="M4 12h13"/><path d="M12 6l6 6-6 6"/>',
   expand: '<path d="M9 3H3v6"/><path d="M3 3l7 7"/><path d="M15 21h6v-6"/><path d="M21 21l-7-7"/>',
   collapse: '<path d="M3 9h6V3"/><path d="M10 10L3 3"/><path d="M21 15h-6v6"/><path d="M14 14l7 7"/>',
   rotateDevice:

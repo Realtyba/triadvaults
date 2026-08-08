@@ -63,3 +63,39 @@ export function neonMaterial(colorHex, { intensity = 0.8, roughness = 0.3, opaci
 export function darkBodyMaterial(colorHex = PALETTE.POLE_DARK, { metalness = 0.8, roughness = 0.4 } = {}) {
   return new THREE.MeshStandardMaterial({ color: colorHex, metalness, roughness });
 }
+
+/**
+ * Ajusta un material que viene de un `.glb` para que se integre en la iluminación de la
+ * bóveda.
+ *
+ * ## Por qué hace falta un sitio único
+ *
+ * Los materiales de la bóveda están calibrados a mano y **cada uno en su fichero**: el
+ * suelo pide `envMapIntensity` 1,6 (`DungeonGen`), los muros 0,55 (`wallMaterial`), los
+ * cuerpos oscuros 0,8. Un material de glTF llega con el valor por defecto de 1, o sea
+ * el doble que un muro, así que un modelo importado brilla de más contra todo lo que
+ * tiene alrededor sin que nadie haya decidido que brille.
+ *
+ * Con el entorno de `RoomEnvironment`, que tiene mucha más estructura que el lienzo
+ * pintado, la diferencia deja de ser sutil. Y como esto lo van a usar los agentes, el
+ * fantasma y los props, la decisión tiene que estar en un sitio: si cada uno ajusta lo
+ * suyo, dentro de tres cambios ya no coinciden.
+ *
+ * ## El suelo de rugosidad
+ *
+ * Los packs CC0 vienen alrededor de `roughness` 0,5, que es un valor de estudio. Visto
+ * en picado y con el neón rasante de este juego, eso se lee como plástico brillante. El
+ * suelo sube la rugosidad **sin bajarla nunca**: un material que ya venía mate se queda
+ * como estaba, porque ahí el autor sí decidió algo.
+ *
+ * @param {THREE.Material} material se modifica en el sitio
+ */
+export function prepareImportedMaterial(material, { envMapIntensity = 0.7, roughnessFloor = 0.55 } = {}) {
+  if (!material) return material;
+
+  if (material.envMapIntensity !== undefined) material.envMapIntensity = envMapIntensity;
+  if (typeof material.roughness === 'number') {
+    material.roughness = Math.max(material.roughness, roughnessFloor);
+  }
+  return material;
+}

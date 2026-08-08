@@ -50,9 +50,13 @@ const PRESETS = {
     // Luces puntuales de agente: 'all' las tres, 'local' solo la propia.
     playerLights: 'local',
 
-    ghostShroud: false,
+    ghostShader: 'basic',
     ghostTrail: false,
     dreadPostFX: false,
+    edgeMarkerHz: 12,
+    envSource: 'canvas',
+    propDensity: 0,
+    propShadows: false,
     bloomScale: 1
   },
   /**
@@ -91,9 +95,13 @@ const PRESETS = {
     lightBreathing: true,
     playerLights: 'local',
 
-    ghostShroud: true,
+    ghostShader: 'rim',
     ghostTrail: false,
-    dreadPostFX: true
+    dreadPostFX: true,
+    edgeMarkerHz: 12,
+    envSource: 'canvas',
+    propDensity: 12,
+    propShadows: false
   },
   medio: {
     label: 'MEDIO',
@@ -112,9 +120,13 @@ const PRESETS = {
     lightBreathing: true,
     playerLights: 'all',
 
-    ghostShroud: true,
+    ghostShader: 'rim',
     ghostTrail: false,
     dreadPostFX: true,
+    edgeMarkerHz: 20,
+    envSource: 'room',
+    propDensity: 24,
+    propShadows: true,
     bloomScale: 1
   },
   alto: {
@@ -136,9 +148,13 @@ const PRESETS = {
     lightBreathing: true,
     playerLights: 'all',
 
-    ghostShroud: true,
+    ghostShader: 'full',
     ghostTrail: true,
     dreadPostFX: true,
+    edgeMarkerHz: 30,
+    envSource: 'room',
+    propDensity: 40,
+    propShadows: true,
     bloomScale: 1
   },
   ultra: {
@@ -166,9 +182,13 @@ const PRESETS = {
     lightBreathing: true,
     playerLights: 'all',
 
-    ghostShroud: true,
+    ghostShader: 'full',
     ghostTrail: true,
     dreadPostFX: true,
+    edgeMarkerHz: 30,
+    envSource: 'room',
+    propDensity: 40,
+    propShadows: true,
     bloomScale: 1
   }
 };
@@ -232,8 +252,21 @@ class QualitySettingsStore {
     return PRESETS[this.level];
   }
 
+  /**
+   * Un ajuste del preset activo.
+   *
+   * El aviso está porque los presets son cinco objetos literales y **añadir una clave a
+   * cuatro de ellos no da ningún error**: el quinto devuelve `undefined`, que en un
+   * `if` es "apagado" y en una cuenta es `NaN`. El síntoma es que una función nueva
+   * funciona en todas partes menos en un nivel de calidad, y eso no se atribuye a una
+   * clave olvidada. Cuesta una comparación en una llamada que ya es un acceso a objeto.
+   */
   get(key) {
-    return this.current[key];
+    const value = this.current[key];
+    if (value === undefined) {
+      console.warn(`[quality] "${key}" no está definida en el preset "${this.level}"`);
+    }
+    return value;
   }
 
   set(level) {

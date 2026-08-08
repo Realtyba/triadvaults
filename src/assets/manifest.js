@@ -30,10 +30,13 @@ export const PLAYER_HEIGHT = 1.7;
  * se ponga en su lugar use la misma convención de Blender.
  */
 export const CLIP_NAMES = {
-  idle: ['idle', 'stand'],
+  idle: ['idle', 'stand', 'float', 'hover'],
   walk: ['walk'],
   run: ['run', 'sprint'],
-  death: ['death', 'die']
+  death: ['death', 'die'],
+  // Solo lo usa el fantasma, en su estado de embestida. Un modelo que no lo traiga se
+  // queda con `run`, que es lo que hace `GhostEnemy.play` al no encontrar el clip.
+  attack: ['attack', 'lunge', 'hit']
 };
 
 /**
@@ -74,11 +77,70 @@ export const PLAYER_MODELS = [
   }
 ];
 
+/** Altura a la que se normaliza el fantasma. Más alto que un agente a propósito. */
+export const GHOST_HEIGHT = 2.1;
+
+/**
+ * Modelo del fantasma.
+ *
+ * `null` mientras no se elija uno: el juego funciona igual, con la silueta procedural
+ * de siempre y el material nuevo encima (ver `GhostEnemy.attachModel`). No es un hueco
+ * a medio hacer, es el mismo respaldo que tienen los agentes elevado a la categoría de
+ * estado normal.
+ *
+ * Para ponerle modelo basta con rellenar esto con la misma forma que `PLAYER_MODELS`
+ * —`{ file, url, bytes, source, author, license }`— y ejecutar `npm run assets`. Lo que
+ * se busca es una silueta **alta y estrecha**, con esqueleto y con clips que encajen en
+ * `CLIP_NAMES`; el material le pone el resto.
+ */
+export const GHOST_MODEL = null;
+
+/**
+ * Atrezo de la bóveda: cajas, bidones, consolas.
+ *
+ * Vacío mientras no se elijan piezas. Sin entradas aquí no se monta atrezo y la sala es
+ * la de siempre, que es un estado válido y no un fallo —ver `engine/PropLibrary.js`—.
+ *
+ * Qué buscar, si se amplía:
+ *
+ *  - **CC0 y de baja densidad**, en la línea de los agentes que ya están (Quaternius,
+ *    Kenney). Un kit realista de 50 000 triángulos con texturas de 2K no cabe en el
+ *    presupuesto de fotograma del preset `movil` y además chocaría con los agentes.
+ *  - **Tres tipos como mucho.** Cada tipo es una llamada de dibujo más, y el techo que
+ *    se ha fijado es de tres.
+ *  - **Sin esqueleto**: son decorado inmóvil y se fusionan en una sola geometría, así
+ *    que una armadura solo añadiría peso que no se usa.
+ *
+ * `bytes` se anota tras la primera descarga: no es una firma, sino la forma de detectar
+ * una descarga cortada a medias. La tolerancia de `fetch-assets.mjs` hace el resto.
+ */
+export const PROP_MODELS = [];
+
 /** Carpeta pública desde la que se sirven. Relativa a la raíz del sitio. */
 export const MODEL_PATH = 'models/';
+
+/** Todo lo que `npm run assets` tiene que traer. Una sola lista, para que no diverjan. */
+export function allModels() {
+  return [...PLAYER_MODELS, ...PROP_MODELS, ...(GHOST_MODEL ? [GHOST_MODEL] : [])];
+}
 
 /** @returns {string} ruta del modelo que le toca a un índice de agente */
 export function playerModelUrl(index = 0) {
   const model = PLAYER_MODELS[index % PLAYER_MODELS.length];
   return `${MODEL_PATH}${model.file}`;
+}
+
+/**
+ * @returns {string|null} ruta de una pieza de atrezo por índice, o `null` si no hay
+ *   ninguna declarada. La lista nace vacía, y `index % 0` es `NaN`: sin esta guarda el
+ *   estado normal del repositorio reventaría aquí en vez de no montar atrezo.
+ */
+export function propModelUrl(index = 0) {
+  if (PROP_MODELS.length === 0) return null;
+  return `${MODEL_PATH}${PROP_MODELS[index % PROP_MODELS.length].file}`;
+}
+
+/** @returns {string|null} ruta del modelo del fantasma, o `null` si no hay */
+export function ghostModelUrl() {
+  return GHOST_MODEL ? `${MODEL_PATH}${GHOST_MODEL.file}` : null;
 }

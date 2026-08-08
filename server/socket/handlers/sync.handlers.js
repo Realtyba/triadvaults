@@ -1,4 +1,4 @@
-import { EVENTS } from '../../../shared/events.js';
+import { EVENTS, GHOST_STATES } from '../../../shared/events.js';
 import { sanitizeVec3 } from '../../rooms/roomState.js';
 import { createHandlerContext } from './context.js';
 
@@ -40,6 +40,19 @@ export function registerSyncHandlers(io, socket, roomManager) {
 /** Máximo de fantasmas admitidos en un paquete: uno por agente. */
 const MAX_GHOSTS = 3;
 
+/**
+ * El estado se comprueba contra la lista, no se reenvía como venga.
+ *
+ * Es el mismo criterio que ya se aplica a `position`: lo que manda el host es el
+ * cliente de alguien, y un índice fuera de rango en los demás clientes se traduce en una
+ * animación inexistente o un uniforme sin sentido. Ante la duda, acecha —el estado más
+ * inofensivo de los tres—.
+ */
+function sanitizeGhostState(value) {
+  const state = Number(value);
+  return state === GHOST_STATES.HUNT || state === GHOST_STATES.CHARGE ? state : GHOST_STATES.STALK;
+}
+
 function sanitizeGhostList(list) {
   if (!Array.isArray(list)) return [];
 
@@ -54,7 +67,8 @@ function sanitizeGhostList(list) {
     ghosts.push({
       id: Number.isFinite(id) ? id : ghosts.length,
       position,
-      targetUid: entry.targetUid ? String(entry.targetUid) : null
+      targetUid: entry.targetUid ? String(entry.targetUid) : null,
+      state: sanitizeGhostState(entry.state)
     });
   }
   return ghosts;

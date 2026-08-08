@@ -63,19 +63,30 @@ logros son JSON y un fallo ahí no lo detecta ningún test.
 
 ## Modelos 3D
 
-Los `.glb` de los agentes **no están en el repositorio**: se declaran en
-`src/assets/manifest.js` (fuente y licencia, todos CC0) y los baja `npm run assets`.
+Los `.glb` **no están en el repositorio**: se declaran en `src/assets/manifest.js` (fuente
+y licencia, todos CC0) y los baja `npm run assets`. Son tres listas: `PLAYER_MODELS` (los
+agentes), `PROP_MODELS` (atrezo de la sala) y `GHOST_MODEL`. Las dos últimas nacen vacías;
+rellenarlas es lo único que hace falta para que aparezcan, y `allModels()` mantiene el
+script de descarga y los créditos en una sola lista.
 
 **El juego arranca y se juega sin ellos**: `engine/AssetLoader.js` cae a la geometría
 primitiva de siempre, igual que el arranque sobrevive a que falte `steamworks.js`. Si los
 agentes se ven como un cilindro con un cubo por cabeza, no es un fallo: es que falta
-ejecutar `npm run assets`.
+ejecutar `npm run assets`. El fantasma conserva además su material completo —borde y
+disolución— sobre la silueta de respaldo, así que sin modelos se ve igual de bien, solo
+más simple. El atrezo es la única excepción: sin `.glb` no se monta nada, porque unas
+cajas genéricas de adorno no aportan nada que no aporte la sala vacía.
 
 ## Aspecto y rendimiento
 
 `?stats=1` en la URL enciende un contador de fotogramas y de llamadas de dibujo
 (`engine/Stats.js`). Es la única forma de comprobar en un móvil real que un cambio visual
 cabe en el fotograma; sin él, "va más fluido" es una opinión.
+
+**El presupuesto es 60 llamadas de dibujo** en el preset `movil`, nivel 1 y tres agentes.
+La referencia sin atrezo son 48. Lo que se añada por encima hay que pagarlo instanciando
+o fusionando, no ampliando el techo: ese margen es lo que mantiene el bloom encendido en
+un teléfono, que es lo que hace que el neón se lea como luz.
 
 Dos cosas que conviene saber antes de tocar el render, ambas explicadas a fondo en
 `docs/ARCHITECTURE.md §8`: el aspecto de la bóveda depende de `scene.environment`

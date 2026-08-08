@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { PLAYER_MODELS } from '../src/assets/manifest.js';
+import { allModels } from '../src/assets/manifest.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TARGET = join(ROOT, 'public', 'models');
@@ -93,7 +93,7 @@ async function download(model) {
 
 /** Deja por escrito de dónde salió cada cosa. CC0 no lo exige; la trazabilidad sí. */
 async function writeCredits() {
-  const rows = PLAYER_MODELS.map(
+  const rows = allModels().map(
     m => `| \`${m.file}\` | ${m.author} | ${m.license} | ${m.source} |`
   ).join('\n');
 
@@ -133,7 +133,7 @@ console.log('\nModelos 3D → public/models/\n');
 await mkdir(TARGET, { recursive: true });
 
 let failures = 0;
-for (const model of PLAYER_MODELS) {
+for (const model of allModels()) {
   try {
     await download(model);
   } catch (err) {

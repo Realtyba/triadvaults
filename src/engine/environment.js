@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { quality } from './QualitySettings.js';
 
 /**
  * Entorno de reflejo del bioma.
@@ -30,6 +32,28 @@ import * as THREE from 'three';
  * que delata a una superficie metálica es el **contraste** del reflejo: zonas claras y
  * oscuras que se desplazan al mover la cámara. Las franjas son eso, y son también la
  * razón de que la sala se vea distinta según hacia dónde mires.
+ *
+ * ## Dos fuentes, y por qué ninguna es un `.hdr`
+ *
+ * El lienzo de arriba tiene un techo: siete franjas planas se reflejan como siete
+ * franjas planas, y desde que la cámara **se mueve con el agente** ese reflejo estático
+ * es lo que delata que el suelo no es metal de verdad. Lo que hace falta es un entorno
+ * con **estructura** —paneles, bloques, un gradiente de techo— para que el reflejo
+ * cambie al desplazarse.
+ *
+ * La salida obvia sería un `.hdr`, y no vale: iría a `public/`, está en `.gitignore` y
+ * habría que bajarlo, pero el juego tiene que poder jugarse sin descargas. O sea que
+ * habría que conservar el lienzo **igualmente** como respaldo, y acabaríamos con dos
+ * entornos para siempre en el que el bueno es el que casi nadie tiene.
+ *
+ * `RoomEnvironment` de `three/examples` no tiene ese problema: es geometría con
+ * materiales emisivos que entra en el paquete, cuesta **cero bytes de red** y ya está
+ * en `node_modules`. En crudo no sirve —es un estudio blanco neutro y borraría el
+ * bioma, que es justo el argumento de este fichero—, así que se le repintan los
+ * materiales con el acento y el fondo del nivel antes de prefiltrarlo. Ver `buildRoom`.
+ *
+ * Qué fuente se usa lo dice el preset (`envSource`): el lienzo en `bajo` y `movil`, la
+ * sala prefiltrada de ahí para arriba.
  */
 
 /** Ancho del lienzo equirrectangular. Se prefiltra a 128, así que más no aporta. */
@@ -38,6 +62,26 @@ const HEIGHT = 128;
 
 /** Cuántas tiras de neón verticales rodean la bóveda. */
 const STRIPS = 7;
+
+/**
+ * Cuánto se baja la emisión de `RoomEnvironment` al teñirla.
+ *
+ * Sus paneles están calibrados para iluminar un estudio de producto sobre fondo claro
+ * —radiancias de 17 a 100— y esta bóveda es una cueva. Sin bajarlo, cambiar de preset
+ * reiluminaría el juego entero en vez de cambiar solo la textura del reflejo.
+ *
+ * Es la pieza a verificar en pantalla si algo se ve lavado o apagado al pasar de
+ * `movil` a `medio`: **se ajusta aquí y no en los `envMapIntensity`**, que están
+ * calibrados por superficie en tres ficheros distintos (suelo 1,6 en `DungeonGen`,
+ * muros 0,55 en `wallMaterial`, cuerpos 0,8 en `materials`) y tocarlos partiría esa
+ * calibración en tres.
+ */
+const ROOM_EMISSION_SCALE = 0.09;
+
+/** Coeficientes de luminancia Rec. 709. Ver `tintEmissive`. */
+function luminance(color) {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+}
 
 /**
  * Genera y prefiltra el entorno de un bioma.
@@ -61,15 +105,84 @@ export class EnvironmentBuilder {
    * @returns {THREE.Texture} mapa de entorno listo para `scene.environment`
    */
   get(colorHex, bgHex) {
-    const key = `${colorHex}:${bgHex}`;
+    // La fuente entra en la clave: al cambiar de preset a mitad de partida hay que
+    // prefiltrar de nuevo, y sin esto se serviría el mapa del preset anterior.
+    const source = quality.get('envSource') === 'room' ? 'room' : 'canvas';
+    const key = `${source}:${colorHex}:${bgHex}`;
+
     if (!this.cache.has(key)) {
-      const source = this.paint(colorHex, bgHex);
-      const target = this.pmrem.fromEquirectangular(source);
-      // El lienzo ya está convolucionado en el mapa: conservarlo sería duplicar.
-      source.dispose();
-      this.cache.set(key, target.texture);
+      const target = source === 'room'
+        ? this.buildRoom(colorHex, bgHex)
+        : this.buildCanvas(colorHex, bgHex);
+      this.cache.set(key, target);
     }
     return this.cache.get(key);
+  }
+
+  /** Prefiltra el lienzo pintado. Ver `paint`. */
+  buildCanvas(colorHex, bgHex) {
+    const source = this.paint(colorHex, bgHex);
+    const target = this.pmrem.fromEquirectangular(source);
+    // El lienzo ya está convolucionado en el mapa: conservarlo sería duplicar.
+    source.dispose();
+    return target.texture;
+  }
+
+  /**
+   * Prefiltra `RoomEnvironment` repintado con los colores del bioma.
+   *
+   * Sus materiales llegan **compartidos** entre varias mallas —una `roomMaterial` para
+   * la caja envolvente, una `boxMaterial` para los bloques y una por panel emisivo—, así
+   * que teñir recorriendo las mallas repintaría el mismo material varias veces. Se lleva
+   * un conjunto de los ya vistos: es más barato que clonar y no cambia el resultado.
+   *
+   * La escena se desecha en cuanto está prefiltrada: lo que se guarda es el mapa, y
+   * dejarla viva sería mantener en memoria una habitación que nadie va a mirar.
+   */
+  buildRoom(colorHex, bgHex) {
+    const scene = new RoomEnvironment();
+    const accent = new THREE.Color(colorHex);
+    const bg = new THREE.Color(bgHex);
+    const seen = new Set();
+
+    scene.traverse(object => {
+      // La luz puntual que trae dentro también es blanca de estudio.
+      if (object.isPointLight) {
+        object.color.copy(accent);
+        object.intensity *= ROOM_EMISSION_SCALE;
+        return;
+      }
+      if (!object.material || seen.has(object.material)) return;
+      seen.add(object.material);
+
+      if (object.material.isMeshBasicMaterial) this.tintEmissive(object.material, accent);
+      // Las superficies no emisivas son las paredes y los bloques del estudio: son lo
+      // que da estructura al reflejo, y en negro no reflejarían nada. Se van al color
+      // de fondo del bioma, subido lo justo para que sigan leyéndose como volumen.
+      else object.material.color.copy(bg).lerp(accent, 0.12).multiplyScalar(2.2);
+    });
+
+    const target = this.pmrem.fromScene(scene, 0.04);
+    scene.dispose();
+    return target.texture;
+  }
+
+  /**
+   * Lleva un panel emisivo al color del bioma **sin cambiar su brillo**.
+   *
+   * `RoomEnvironment` codifica la intensidad de cada panel en el propio color, como un
+   * gris de valor 17 a 100. Multiplicar ese gris por un acento saturado —un cian es
+   * `(0, 0.95, 1)`— le quita casi toda la componente roja y la escena se oscurece de
+   * paso, así que el cambio de tono vendría con un cambio de exposición encima.
+   *
+   * Dividiendo por la luminancia del acento se conserva la energía: el panel emite lo
+   * mismo, solo que en color. Es lo que permite que cambiar de bioma cambie el tono del
+   * reflejo y no lo que se ve.
+   */
+  tintEmissive(material, accent) {
+    const intensity = material.color.r * ROOM_EMISSION_SCALE;
+    const energy = Math.max(luminance(accent), 0.05);
+    material.color.copy(accent).multiplyScalar(intensity / energy);
   }
 
   /** Dibuja el lienzo equirrectangular del bioma. */

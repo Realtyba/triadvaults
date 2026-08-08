@@ -36,3 +36,25 @@ export const EVENTS = {
 
 /** Daño por impacto del fantasma. El servidor no acepta valores mayores. */
 export const GHOST_DAMAGE = 20;
+
+/**
+ * En qué anda el fantasma. Lo decide el host y viaja dentro de `GHOST_STATE`.
+ *
+ * Vive aquí por la misma regla que los nombres de evento: es un contrato entre el
+ * cliente, el servidor —que lo sanea— y el otro cliente que lo pinta. Si los números
+ * estuvieran escritos en cada sitio, el día que se añada un estado en medio quedarían
+ * desincronizados **en silencio**, y el síntoma sería un fantasma que en una pantalla
+ * embiste y en otra pasea.
+ *
+ * Números y no cadenas porque esto se manda quince veces por segundo por fantasma.
+ *
+ * Lo que hace cada uno está en `src/entities/ghost/GhostBrain.js`.
+ */
+export const GHOST_STATES = Object.freeze({
+  /** Rodea los muros, despacio, sin haberte visto. */
+  STALK: 0,
+  /** Te ha visto: línea recta, atravesando la geometría. */
+  HUNT: 1,
+  /** Embestida con la dirección congelada. */
+  CHARGE: 2
+});

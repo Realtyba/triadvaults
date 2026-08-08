@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Comprueba que empujar el mando en una dirección mueve al agente en esa dirección.
+ * Comprueba que empujar el mando en una dirección mueve al agente en esa dirección, y
+ * que la cámara va detrás de él.
  *
  * Suena obvio y por eso llevaba tiempo roto. `EngineInput` rotaba el vector 45°
  * apoyándose en un comentario que decía que la cámara era isométrica, mientras que
@@ -14,6 +15,12 @@
  * encuadre que se elija mañana, lo que el jugador señala y hacia donde anda el agente
  * tienen que coincidir. Si alguien vuelve a mover `baseOffset` sin tocar la entrada,
  * esto falla.
+ *
+ * La segunda mitad cubre lo mismo para la cámara. `EngineCamera.follow` existía y se
+ * llamaba cada fotograma, pero un caso especial dentro de `clampToRoom` la clavaba en el
+ * centro de la sala en cuanto ésta cabía en pantalla —o sea, casi siempre—, así que en
+ * la práctica no seguía a nadie. Era un fallo invisible desde el código: la función
+ * correcta, llamada en el sitio correcto, sin efecto.
  *
  * Va con los `validate:*` y no con los e2e a propósito: es geometría pura, no necesita
  * navegador, y así corre en un segundo en vez de levantar Chrome y la API.
@@ -146,9 +153,76 @@ check(
   `en diagonal el módulo fue ${diagonal.length().toFixed(3)}, por encima de 1`
 );
 
+// ------------------------------------------------------ la cámara sigue al agente
+
+/**
+ * Simula `n` segundos de seguimiento con el agente quieto en `(x, 0, z)`.
+ *
+ * Se parte de una cámara recién construida —con `hasLastPosition` en falso— y el agente
+ * ya colocado en su sitio, para que la velocidad medida sea cero desde el principio y
+ * `lookAhead` no entre en la cuenta. Lo que se mide así es el seguimiento puro.
+ */
+function followFor(camera, x, z, seconds, delta) {
+  const position = new THREE.Vector3(x, 0, z);
+  for (let t = 0; t < seconds; t += delta) camera.follow(position, delta);
+  return camera.target;
+}
+
+const following = new EngineCamera();
+following.setRoomBounds(36, 36);
+const followed = followFor(following, 8, 8, 2, 1 / 60);
+check(
+  followed.x > 1 && followed.z > 1,
+  'la cámara sigue al agente hasta su rincón de la sala',
+  `la cámara se quedó mirando a (${followed.x.toFixed(2)}, ${followed.z.toFixed(2)}) con el agente en (8, 8)`
+);
+
+// La zona muerta no persigue el último tramo, así que la mirada se queda algo corta.
+// Eso es lo que se quiere; lo que no puede es quedarse a medio camino.
+check(
+  Math.hypot(8 - followed.x, 8 - followed.z) < 2.5,
+  'la mirada se queda a menos de una zona muerta del agente',
+  `la mirada quedó a ${Math.hypot(8 - followed.x, 8 - followed.z).toFixed(2)} unidades del agente`
+);
+
+// --------------------------------------------------- pero no se escapa de la bóveda
+
+const confined = new EngineCamera();
+confined.setRoomBounds(20, 20);
+const escaped = followFor(confined, 100, 100, 2, 1 / 60);
+// `setRoomBounds` deja el semieje en 10 + 2,4 de margen, y `OVERSCAN` añade 4.
+const limit = 20 / 2 + 2.4 + 4;
+check(
+  escaped.x <= limit + EPSILON && escaped.z <= limit + EPSILON,
+  'con el agente fuera de la sala, la vista se queda en el borde de la bóveda',
+  `la vista se fue a (${escaped.x.toFixed(2)}, ${escaped.z.toFixed(2)}), fuera del tope de ${limit}`
+);
+
+// ------------------------------------- y a la misma velocidad en cualquier pantalla
+
+// El suavizado era un `lerp` de factor fijo por fotograma, o sea que un panel de 120 Hz
+// movía la cámara al doble de rápido que uno de 60. Mientras la vista estaba clavada en
+// el centro de la sala no se notaba; en cuanto sigue al jugador, es otro juego.
+const slow = new EngineCamera();
+slow.setRoomBounds(36, 36);
+const fast = new EngineCamera();
+fast.setRoomBounds(36, 36);
+
+const atThirty = followFor(slow, 10, 0, 0.25, 1 / 30).x;
+const atOneTwenty = followFor(fast, 10, 0, 0.25, 1 / 120).x;
+// El margen no es cero porque la zona muerta se descuenta **una vez por fotograma**, y
+// eso sí depende de cuántos haya: a 30 fps son 7 mordiscos y a 120 son 30. El residuo
+// queda por debajo del 1 % del recorrido. Con el `lerp` de factor fijo anterior la
+// diferencia era de varias unidades, así que el margen distingue de sobra los dos casos.
+check(
+  Math.abs(atThirty - atOneTwenty) < 0.15,
+  'a 30 y a 120 fotogramas por segundo la cámara ha recorrido lo mismo',
+  `tras 0,25 s la cámara iba por ${atThirty.toFixed(3)} a 30 fps y por ${atOneTwenty.toFixed(3)} a 120 fps`
+);
+
 console.log(
   failures === 0
-    ? '\n✅ El agente anda hacia donde se le señala.\n'
+    ? '\n✅ El agente anda hacia donde se le señala y la cámara va con él.\n'
     : `\n❌ ${failures} comprobación(es) fallida(s).\n`
 );
 process.exit(failures === 0 ? 0 : 1);

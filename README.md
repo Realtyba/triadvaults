@@ -31,12 +31,13 @@ con o sin conexión.
 
 - 🧩 **4 arquetipos de puzle** — placas simultáneas, secuencia por color,
   contrarreloj y un modo `relay` que exige coordinación (2-3 jugadores).
-- 👻 **IA con objetivo dinámico** — el fantasma persigue a quien puntúa más
-  alto por cercanía, vida baja y si está resolviendo un puzle.
+- 👻 **IA con objetivo dinámico y separación (Swarm)** — el fantasma persigue a quien puntúa más
+  alto por cercanía, vida baja y si está resolviendo un puzle. Los fantasmas que comparten objetivo
+  se separan orgánicamente con steering y desfasando sus tiempos de ataque.
 - 🌐 **Multijugador en tiempo real** — salas por socket, con reconexión (15 s
   de gracia) que conserva personaje, vida y autoridad de host.
 - 📴 **Modo sin conexión** — se juega igual sin red; el progreso se sincroniza
-  solo cuando vuelve el enlace.
+  solo cuando vuelve el enlace, usando un overlay de carga global (Loader).
 - 🏆 **Logros configurables** — catálogo editable desde un panel de admin,
   sin publicar versión nueva del juego.
 - 🎮 **Mando y teclado remapeables**, con zona muerta radial y QWERTY/AZERTY.

@@ -18,7 +18,9 @@ export class RoomController {
   create() {
     if (!this.ui.requireVerifiedAccount()) return;
 
+    this.ui.showLoading('loading_creating');
     this.socket.createRoom(res => {
+      this.ui.hideLoading();
       if (res && res.success) this.enterLobby(res.room);
       else this.ui.alert(this.errorFrom(res, 'error_create_room'));
     });
@@ -35,7 +37,9 @@ export class RoomController {
   join(code) {
     if (!this.ui.requireVerifiedAccount()) return;
 
+    this.ui.showLoading('loading_joining');
     this.socket.joinRoom(code, res => {
+      this.ui.hideLoading();
       if (!res || !res.success) {
         return this.ui.alert(this.errorFrom(res, 'error_join_room'));
       }

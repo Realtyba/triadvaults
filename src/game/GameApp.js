@@ -71,6 +71,8 @@ export class GameApp {
     this.ghostAccumulator = 0;
     this.hudAccumulator = 0;
     this.edgeAccumulator = 0;
+    this.puzzleAccumulator = 0;
+    this.lastPuzzleProgress = -1;
 
     this.ambient = new AmbientScene({
       scene: this.renderer.scene,
@@ -99,6 +101,11 @@ export class GameApp {
       assets.preload(PLAYER_MODELS.map((_, i) => playerModelUrl(i)));
     }
 
+    // Closures reutilizados: antes se recreaban en el bucle o en la primera llamada
+    // a `step`, produciendo basura que el GC tiene que recoger.
+    this.isOnPlateBound = pos => this.level.isPlayerOnPlate(pos);
+    this.onGhostHitBound = uid => this.onGhostHit(uid);
+
     this.animate();
   }
 
@@ -110,6 +117,20 @@ export class GameApp {
 
   /** Arranca un nivel con la semilla que dicta el servidor. */
   startLevel({ level, seed, seedOffset = 0, playersCount }) {
+    // Se muestra el loader mientras se genera: la construcción de la sala bloquea
+    // el hilo principal lo suficiente como para sentirse como un freeze.
+    this.ui.showLoading('loading_level');
+
+    // Se difiere al siguiente fotograma para que el navegador pinte el loader
+    // antes de que la generación se lleve todo el presupuesto del frame.
+    requestAnimationFrame(() => this._buildLevel({ level, seed, seedOffset, playersCount }));
+  }
+
+  /**
+   * Construcción efectiva del nivel, una vez que el loader ya se ha pintado.
+   * @private
+   */
+  _buildLevel({ level, seed, seedOffset = 0, playersCount }) {
     const room = this.socket.currentRoom;
     const count = playersCount || (room ? room.players.length : 1);
 
@@ -126,6 +147,8 @@ export class GameApp {
     // lo cuente, y los logros de "sin recibir un golpe" necesitan saberlo.
     this.levelDamage = 0;
     this.lastPuzzleSolved = false;
+    this.lastPuzzleProgress = -1;
+    this.puzzleAccumulator = 0;
     this.running = true;
 
     // Atmósfera y motas del tema del nivel: cada bioma es un sitio distinto.
@@ -160,6 +183,11 @@ export class GameApp {
     }
 
     this.sound.startBGM();
+
+    // Se quita el loader justo antes de publicar el estado de nivel, para que el
+    // primer fotograma pintado ya tenga la sala completa.
+    this.ui.hideLoading();
+
     this.ui.onLevelStarted({
       level,
       playersCount: count,
@@ -435,9 +463,9 @@ export class GameApp {
     }
 
     this.players.updateRemotes(delta);
-    this.players.list().forEach(entity => entity.updateShieldVisual());
+    this.players.forEachEntity(entity => entity.updateShieldVisual());
 
-    const snapshot = this.players.snapshot(this.isOnPlateBound || (this.isOnPlateBound = pos => this.level.isPlayerOnPlate(pos)));
+    const snapshot = this.players.snapshot(this.isOnPlateBound);
     this.updateGhosts(delta, snapshot);
     this.updatePuzzle(snapshot, local, delta);
     this.updateTension(delta, local);
@@ -635,7 +663,7 @@ export class GameApp {
     }
 
     const range = this.level.roomRange;
-    const onHit = this.onGhostHitBound || (this.onGhostHitBound = uid => this.onGhostHit(uid));
+    const onHit = this.onGhostHitBound;
 
     // Las rutas del acecho, antes de mover a nadie: un campo por presa, compartido por
     // los fantasmas que vayan a por ella. Ver `LevelController.updateFlowFields`.
@@ -644,7 +672,7 @@ export class GameApp {
     for (const ghost of ghosts) {
       const previous = ghost.targetUid;
       const wasStalking = ghost.brain.state === GHOST_STATES.STALK;
-      const targetUid = ghost.update(delta, snapshot, onHit, range);
+      const targetUid = ghost.update(delta, snapshot, onHit, range, ghosts);
       const mine = targetUid && targetUid === this.socket.uid;
 
       // El aviso suena cuando **te ve**, no cuando cambia de presa.
@@ -723,7 +751,15 @@ export class GameApp {
     }
     this.lastPuzzleSolved = result.solved;
 
-    this.ui.setObjectiveProgress(result.progressPercent, result.solved);
+    // Throttle del progreso: el HUD no necesita más de ~8 actualizaciones por
+    // segundo y antes se hacía un `store.patch` en cada fotograma incluso cuando
+    // el valor no había cambiado, que es la mayor fuente de repintados inútiles.
+    this.puzzleAccumulator += delta;
+    if (this.puzzleAccumulator >= 0.125 || result.solved !== this.lastPuzzleSolved || result.progressPercent !== this.lastPuzzleProgress) {
+      this.puzzleAccumulator = 0;
+      this.lastPuzzleProgress = result.progressPercent;
+      this.ui.setObjectiveProgress(result.progressPercent, result.solved);
+    }
 
     if (result.solved && local && local.alive && this.level.isAtExit(local.getPosition())) {
       this.running = false;

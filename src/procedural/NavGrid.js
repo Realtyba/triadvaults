@@ -217,10 +217,17 @@ export class NavGrid {
    * Quien lo use solo tiene que mirar sus cuatro vecinas y quedarse con la de menor
    * distancia. Ver `GhostBrain`.
    *
+   * @param {number} targetCol
+   * @param {number} targetRow
+   * @param {Uint16Array} [buffer] búfer reutilizable; si se pasa, se llena en vez de
+   *   crear uno nuevo. Evita una asignación por cambio de celda.
    * @returns {Uint16Array} distancia por celda; `UNREACHABLE` donde no se llega
    */
-  computeFlowField(targetCol, targetRow) {
-    const field = new Uint16Array(this.cols * this.rows).fill(UNREACHABLE);
+  computeFlowField(targetCol, targetRow, buffer) {
+    const size = this.cols * this.rows;
+    const field = buffer && buffer.length === size
+      ? buffer.fill(UNREACHABLE)
+      : new Uint16Array(size).fill(UNREACHABLE);
     if (!this.inBounds(targetCol, targetRow) || this.isBlocked(targetCol, targetRow)) return field;
 
     field[this.index(targetCol, targetRow)] = 0;

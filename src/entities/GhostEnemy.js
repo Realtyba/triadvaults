@@ -75,7 +75,7 @@ export class GhostEnemyEntity {
     this.speed = 2.5;
     this.damageCooldown = 0;
     this.targetSelector = new TargetSelector();
-    this.brain = new GhostBrain();
+    this.brain = new GhostBrain(index);
     this.targetUid = null;
     this.elapsed = 0;
 
@@ -87,6 +87,15 @@ export class GhostEnemyEntity {
     this.obstacleBoxes = null;
     /** Vector de trabajo del paso con deslizamiento; se reutiliza cada fotograma. */
     this.slideStep = new THREE.Vector3();
+    /** Vector de trabajo de la separación entre fantasmas. */
+    this.separationForce = new THREE.Vector3();
+
+    /**
+     * Sesgo angular por fantasma: hace que cada uno prefiera un lado distinto al
+     * rodear los muros en acecho. Sin él, dos fantasmas con el mismo flow field
+     * siguen exactamente la misma ruta y se agrupan en un punto.
+     */
+    this.angleBias = ((index % 2 === 0) ? 1 : -1) * (0.35 + index * 0.15);
 
     /** Distancia a su presa en el último fotograma; la usa la capa de tensión. */
     this.distanceToTarget = Infinity;
@@ -417,9 +426,10 @@ export class GhostEnemyEntity {
    * @param {Array<{uid, index, position, health, alive, onPlate}>} players
    * @param {(targetUid: string) => void} onDamage
    * @param {number} roomRange diagonal de la sala, para calibrar la puntuación
+   * @param {GhostEnemyEntity[]} [siblings] todos los fantasmas, para la separación
    * @returns {string|null} uid perseguido
    */
-  update(delta, players = [], onDamage, roomRange) {
+  update(delta, players = [], onDamage, roomRange, siblings = []) {
     this.elapsed += delta;
     this.animateIdle(delta);
 
@@ -431,7 +441,7 @@ export class GhostEnemyEntity {
 
     this.distanceToTarget = target.distance;
     this.setTargetIndicator(target.player.uid, players);
-    this.hunt(delta, target);
+    this.hunt(delta, target, siblings);
 
     if (this.damageCooldown > 0) {
       this.damageCooldown -= delta;
@@ -470,7 +480,7 @@ export class GhostEnemyEntity {
    * mundo es cosa de aquí, porque es lo único que necesita conocer la rejilla y la
    * escena. Ver `ghost/GhostBrain.js`.
    */
-  hunt(delta, target) {
+  hunt(delta, target, siblings = []) {
     const position = this.mesh.position;
     const dx = target.player.position.x - position.x;
     const dz = target.player.position.z - position.z;
@@ -493,15 +503,25 @@ export class GhostEnemyEntity {
     const direction = plan.direction
       || (plan.pathfinding ? this.stalkDirection(toTarget) : toTarget);
 
+    // Separación entre fantasmas: se repelen mutuamente para no agruparse.
+    // Solo se aplica en estados que no son embestida (la embestida va congelada).
+    if (plan.state !== GHOST_STATES.CHARGE && siblings.length > 1) {
+      this.applySeparation(direction, siblings, delta);
+    }
+
     this.step(direction, this.speed * plan.speedScale * delta, target.distance, plan, delta);
   }
 
   /**
-   * Siguiente paso del acecho, leído del campo de flujo.
+   * Siguiente paso del acecho, leído del campo de flujo con sesgo angular.
    *
    * Se mira la celda vecina de menor distancia y se apunta a su centro. Con eso basta:
    * el campo ya contiene la ruta entera, así que no hay nada que recorrer ni recordar.
    * Sin campo —o en una celda desde la que no se llega— cae a la línea recta.
+   *
+   * El **sesgo angular** (angleBias) hace que cada fantasma prefiera un vecino lateral
+   * distinto cuando dos celdas están a la misma distancia: así dos fantasmas con el
+   * mismo flow field toman caminos opuestos alrededor de un obstáculo.
    */
   stalkDirection(fallback) {
     if (!this.navGrid || !this.flowField) return fallback;
@@ -509,23 +529,89 @@ export class GhostEnemyEntity {
     const here = this.navGrid.toCell(this.mesh.position.x, this.mesh.position.z);
     let best = null;
     let bestDistance = this.flowField[this.navGrid.index(here.col, here.row)] ?? Infinity;
+    // Segundo mejor: se elige cuando empata con el mejor, según el sesgo del fantasma.
+    let second = null;
+    let secondDistance = Infinity;
 
-    for (const [c, r] of [[here.col + 1, here.row], [here.col - 1, here.row],
-      [here.col, here.row + 1], [here.col, here.row - 1]]) {
+    // Vecinos en 8 direcciones (4 cardinales + 4 diagonales) para rutas más orgánicas.
+    const neighbors = [
+      [here.col + 1, here.row], [here.col - 1, here.row],
+      [here.col, here.row + 1], [here.col, here.row - 1],
+      [here.col + 1, here.row + 1], [here.col - 1, here.row - 1],
+      [here.col + 1, here.row - 1], [here.col - 1, here.row + 1]
+    ];
+
+    for (const [c, r] of neighbors) {
       if (!this.navGrid.inBounds(c, r)) continue;
       const distance = this.flowField[this.navGrid.index(c, r)];
       if (distance < bestDistance) {
+        second = best;
+        secondDistance = bestDistance;
         bestDistance = distance;
         best = { col: c, row: r };
+      } else if (distance < secondDistance && distance !== bestDistance) {
+        secondDistance = distance;
+        second = { col: c, row: r };
       }
     }
     if (!best) return fallback;
 
-    const world = this.navGrid.toWorld(best.col, best.row);
+    // Si hay un segundo camino casi igual de bueno, los fantasmas impares lo
+    // prefieren: esto es lo que los hace rodear el muro por lados opuestos.
+    const chosen = (second && secondDistance <= bestDistance + 1 && this.angleBias > 0)
+      ? second
+      : best;
+
+    const world = this.navGrid.toWorld(chosen.col, chosen.row);
     const dx = world.x - this.mesh.position.x;
     const dz = world.z - this.mesh.position.z;
     const length = Math.hypot(dx, dz) || 1;
     return { x: dx / length, z: dz / length };
+  }
+
+  /**
+   * Separación entre fantasmas.
+   *
+   * Empuja la dirección de movimiento lejos de los hermanos cercanos, para que no se
+   * amontonen. El cálculo es O(n²) pero n ≤ 3, así que son 6 comparaciones como máximo.
+   *
+   * La fuerza se mezcla con la dirección original en vez de sustituirla: así no dejan
+   * de perseguir, solo se apartan.
+   *
+   * @param {{x: number, z: number}} direction se modifica in-place
+   * @param {GhostEnemyEntity[]} siblings
+   * @param {number} delta
+   */
+  applySeparation(direction, siblings, delta) {
+    const SEPARATION_RADIUS = 2.5;
+    const SEPARATION_STRENGTH = 3.0;
+    let fx = 0;
+    let fz = 0;
+    let count = 0;
+
+    for (const other of siblings) {
+      if (other === this) continue;
+      const dx = this.mesh.position.x - other.mesh.position.x;
+      const dz = this.mesh.position.z - other.mesh.position.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < SEPARATION_RADIUS && dist > 0.01) {
+        // Fuerza inversamente proporcional a la distancia.
+        const strength = (SEPARATION_RADIUS - dist) / SEPARATION_RADIUS;
+        fx += (dx / dist) * strength;
+        fz += (dz / dist) * strength;
+        count++;
+      }
+    }
+
+    if (count === 0) return;
+
+    // Se mezcla: 70% dirección original, 30% separación.
+    const mix = SEPARATION_STRENGTH * delta;
+    direction.x += fx * mix;
+    direction.z += fz * mix;
+    const length = Math.hypot(direction.x, direction.z) || 1;
+    direction.x /= length;
+    direction.z /= length;
   }
 
   /**

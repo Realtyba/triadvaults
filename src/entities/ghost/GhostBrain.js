@@ -69,7 +69,10 @@ const CHARGE_COOLDOWN = 2.6;
 const STALK_PATIENCE_SECONDS = 9;
 
 export class GhostBrain {
-  constructor() {
+  /**
+   * @param {number} [ghostIndex=0] índice del fantasma, para desfasar tiempos
+   */
+  constructor(ghostIndex = 0) {
     this.state = GHOST_STATES.STALK;
     this.stateTime = 0;
     this.sinceSeen = Infinity;
@@ -80,6 +83,14 @@ export class GhostBrain {
     this.charge = 0;
     /** De 0 a 1 con el nivel: recorta la paciencia del acecho. */
     this.pressure = 0;
+
+    /**
+     * Jitter por fantasma: desfasa los tiempos de la máquina de estados para que
+     * dos fantasmas no cambien de estado en el mismo fotograma. Sin él, si te ven a
+     * la vez, los dos cazan, cargan y recuperan sincronizados, lo que se siente como
+     * un único enemigo duplicado.
+     */
+    this.jitter = ghostIndex * 0.3;
   }
 
   reset() {
@@ -94,9 +105,9 @@ export class GhostBrain {
     this.pressure = Math.min(Math.max(pressure, 0), 1);
   }
 
-  /** Paciencia efectiva: a nivel alto se agota antes. */
+  /** Paciencia efectiva: a nivel alto se agota antes. Desfasada por jitter. */
   get patience() {
-    return STALK_PATIENCE_SECONDS * (1 - this.pressure * 0.7);
+    return STALK_PATIENCE_SECONDS * (1 - this.pressure * 0.7) + this.jitter;
   }
 
   enter(state) {
@@ -160,7 +171,8 @@ export class GhostBrain {
     if (distance < CHARGE_RANGE && this.chargeCooldown === 0) {
       // El vector se congela **aquí**, al entrar, y no se vuelve a tocar.
       this.chargeDir = { x: toTarget.x, z: toTarget.z };
-      this.chargeCooldown = CHARGE_COOLDOWN + CHARGE_SECONDS + RECOVER_SECONDS;
+      // El cooldown se desfasa por fantasma para que no embistan a la vez.
+      this.chargeCooldown = CHARGE_COOLDOWN + CHARGE_SECONDS + RECOVER_SECONDS + this.jitter;
       this.enter(GHOST_STATES.CHARGE);
       return;
     }

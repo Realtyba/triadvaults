@@ -74,7 +74,10 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     zoom: 100,
     paused: false,
     canRegenerate: false,
-    alertMessage: ''
+    alertMessage: '',
+    // null = no cargando; string = clave i18n del mensaje que muestra el overlay.
+    // Lo encienden `showLoading` / `hideLoading` de UIManager.
+    loading: null
   };
 }
 

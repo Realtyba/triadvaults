@@ -115,3 +115,11 @@ Dos cosas que conviene saber antes de tocar el render, ambas explicadas a fondo 
 `docs/ARCHITECTURE.md §8`: el aspecto de la bóveda depende de `scene.environment`
 (sin entorno, los materiales metálicos devuelven negro) y el preset `movil` es el que
 mantiene el bloom en un teléfono, que es lo que hace que el neón se lea como luz.
+
+**Optimizaciones v2.0**:
+- **Loader Global**: las generaciones procedurales pesadas liberan el hilo principal y muestran
+  `LoadingOverlay` para evitar la sensación de "freeze".
+- **Throttle**: la actualización del UI (ej. progreso de puzle) se estrangula a ~8 Hz.
+- **Separación de memoria y CPU**: los cierres en `GameApp.step` se reutilizan, `NavGrid`
+  reusa buffers tipados, y la IA de enjambre de fantasmas incorpora jitter y steering
+  de repulsión local, de coste O(n²) acotado.

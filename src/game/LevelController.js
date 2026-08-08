@@ -129,7 +129,10 @@ export class LevelController {
       const cell = grid.toCell(prey.position.x, prey.position.z);
       const entry = cache.get(uid);
       if (!entry || entry.col !== cell.col || entry.row !== cell.row) {
-        cache.set(uid, { col: cell.col, row: cell.row, field: grid.computeFlowField(cell.col, cell.row) });
+        // Se reutiliza el búfer anterior si existe: evita crear un Uint16Array en cada
+        // cambio de celda. `computeFlowField` lo llena desde cero con UNREACHABLE.
+        const reuse = entry ? entry.field : undefined;
+        cache.set(uid, { col: cell.col, row: cell.row, field: grid.computeFlowField(cell.col, cell.row, reuse) });
       }
       ghost.flowField = cache.get(uid).field;
     }

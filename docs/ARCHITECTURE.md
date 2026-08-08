@@ -138,6 +138,16 @@ en el que todo cambia.
 La embestida **no corrige** el rumbo durante su carga: es lo que la hace esquivable y por
 tanto justa, y la recuperación posterior es la ventana para escapar.
 
+### Separación de IA (Swarm)
+
+Si dos fantasmas persiguen al mismo jugador, compartirán el mismo campo de flujo. Para evitar
+que sigan exactamente la misma ruta y se amontonen visualmente:
+1. **Sesgo angular**: cada fantasma prefiere girar los obstáculos por lados opuestos en función
+   de su índice (`angleBias`).
+2. **Separación (Steering)**: se repelen mutuamente si se acercan a menos de 2.5 unidades.
+3. **Jitter de tiempos**: la paciencia y el cooldown de embestida se desfasan ligeramente para
+   que no transicionen de estado a la vez, dando sensación de inteligencia de enjambre independiente.
+
 ### Lo que aporta el `NavGrid`
 
 - `hasLineOfSight(ax, az, bx, bz)` — recorrido de vóxeles de Amanatides–Woo. **Simétrico
@@ -171,11 +181,13 @@ de qué depende y solo se repinta cuando alguna cambia.
 Dos reglas que sostienen el rendimiento:
 
 - **El HUD no reconstruye HTML.** `HudView` monta su esqueleto una vez, cachea las
-  referencias y en el bucle solo asigna `textContent` y `style.width`. Antes el bucle
-  de render llamaba a `updateObjective()`, que reescribía el `innerHTML` de toda la
-  interfaz 60 veces por segundo.
+  referencias y en el bucle solo asigna `textContent` y `style.width`. Además, el progreso
+  del puzle tiene throttle (~8 Hz) en vez de actualizar cada fotograma.
 - **Los campos de formulario no viven en el store** (`FormState`). Si lo hicieran, cada
   tecla provocaría un repintado y el input perdería el foco a mitad de escritura.
+- **Loader global (`LoadingOverlay`)**: Las transiciones pesadas (generación procedural,
+  conexión a sala, sync sin conexión) liberan el hilo principal y usan el overlay de
+  carga `loading` (con PRNG y RequestAnimationFrame) para que el juego no se sienta colgado.
 
 Los eventos se resuelven por delegación con `data-action`, y todo dato escrito por un
 usuario pasa por `esc()` antes de interpolarse.

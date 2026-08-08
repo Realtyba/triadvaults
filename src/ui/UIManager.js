@@ -9,6 +9,7 @@ import { HudView } from './views/HudView.js';
 import { EdgeMarkersView } from './views/EdgeMarkersView.js';
 import { TouchControlsView } from './views/TouchControlsView.js';
 import { ReconnectingOverlay } from './views/ReconnectingOverlay.js';
+import { LoadingOverlay } from './views/LoadingOverlay.js';
 import { RotateNotice } from './views/RotateNotice.js';
 import { AchievementToast } from './views/AchievementToast.js';
 import { ModalHost } from './modals/ModalHost.js';
@@ -128,6 +129,7 @@ export class UIManager {
       // se leen bien, así que este aviso es lo único que debe verse.
       rotate: el('div', { className: 'rotate-notice hidden' }),
       reconnect: el('div', { className: 'reconnect-overlay hidden' }),
+      loading: el('div', { className: 'loading-overlay hidden' }),
       // Fuera de las vistas: los avisos de logro se ven en el menú y en partida.
       toast: el('div', { className: 'toast-host hidden' })
     };
@@ -165,6 +167,7 @@ export class UIManager {
     this.modals = new ModalHost(this.nodes.modal, this.ctx);
     this.rotateNotice = new RotateNotice(this.nodes.rotate, this.ctx);
     this.reconnect = new ReconnectingOverlay(this.nodes.reconnect, this.ctx);
+    this.loadingOverlay = new LoadingOverlay(this.nodes.loading, this.ctx);
     this.toasts = new AchievementToast(this.nodes.toast, this.ctx);
 
     this.mainMenu.mount(state);
@@ -180,6 +183,7 @@ export class UIManager {
     this.subscribeView(this.modals, ModalHost.keys);
     this.subscribeView(this.rotateNotice, RotateNotice.keys);
     this.subscribeView(this.reconnect, ReconnectingOverlay.keys);
+    this.subscribeView(this.loadingOverlay, LoadingOverlay.keys);
 
     this.store.subscribe(['view'], s => this.applyViewVisibility(s));
     this.store.subscribe(['lang', 'audioMuted'], () => this.renderTopBar());
@@ -196,6 +200,7 @@ export class UIManager {
     this.modals.render(state, null);
     this.rotateNotice.render(state, null);
     this.reconnect.render(state, null);
+    this.loadingOverlay.render(state, null);
   }
 
   subscribeView(view, keys) {
@@ -750,7 +755,9 @@ export class UIManager {
     const runs = offlineStore.pendingRuns();
     if (runs.length === 0 || !this.store.get().user) return;
 
+    this.showLoading('loading_syncing');
     const res = await this.api.syncProgress(runs);
+    this.hideLoading();
     if (!res.success) return;
 
     offlineStore.clearSynced(res.applied || 0);
@@ -875,5 +882,18 @@ export class UIManager {
 
   alert(message) {
     this.openModal('alert', { alertMessage: message });
+  }
+
+  /**
+   * Enciende el overlay de carga con un mensaje traducido.
+   * @param {string} key clave i18n del texto a mostrar
+   */
+  showLoading(key = 'loading_connecting') {
+    this.store.patch({ loading: key });
+  }
+
+  /** Apaga el overlay de carga. */
+  hideLoading() {
+    this.store.patch({ loading: null });
   }
 }

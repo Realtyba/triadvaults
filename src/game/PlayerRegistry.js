@@ -40,6 +40,11 @@ export class PlayerRegistry {
     return Array.from(this.players.values());
   }
 
+  /** Itera las entidades sin crear un array intermedio. Para el bucle de juego. */
+  forEachEntity(fn) {
+    this.players.forEach(fn);
+  }
+
   /**
    * Concilia la escena con la lista de jugadores del servidor: crea los nuevos,
    * elimina a los que se fueron y actualiza el resto sin recrear nada.

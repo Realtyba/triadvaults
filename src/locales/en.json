@@ -206,5 +206,10 @@
   "offline_hint": "Solo run with no server needed. Progress is saved on this machine.",
   "offline_needs_verification": "Verify your email to play. If you'd rather play offline, log out first.",
   "offline_pending": "{0} level(s) played offline waiting to sync.",
-  "offline_synced": "Synced {0} level(s) played offline."
+  "offline_synced": "Synced {0} level(s) played offline.",
+  "loading_level": "GENERATING VAULT",
+  "loading_connecting": "CONNECTING",
+  "loading_syncing": "SYNCING PROGRESS",
+  "loading_joining": "JOINING ROOM",
+  "loading_creating": "CREATING ROOM"
 }

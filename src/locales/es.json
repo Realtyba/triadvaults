@@ -206,5 +206,10 @@
   "offline_hint": "Partida en solitario que no necesita servidor. El progreso se guarda en este equipo.",
   "offline_needs_verification": "Verifica tu correo para jugar. Si prefieres jugar sin conexión, cierra la sesión primero.",
   "offline_pending": "{0} nivel(es) jugados sin red esperando a sincronizarse.",
-  "offline_synced": "Sincronizados {0} nivel(es) jugados sin conexión."
+  "offline_synced": "Sincronizados {0} nivel(es) jugados sin conexión.",
+  "loading_level": "GENERANDO BÓVEDA",
+  "loading_connecting": "CONECTANDO",
+  "loading_syncing": "SINCRONIZANDO PROGRESO",
+  "loading_joining": "ENTRANDO A LA SALA",
+  "loading_creating": "CREANDO SALA"
 }

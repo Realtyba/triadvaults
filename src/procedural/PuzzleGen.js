@@ -48,7 +48,7 @@ export class PuzzleGenerator {
    * @param {typeof PressurePlates} [Type] arquetipo forzado; si se omite se elige
    *   por semilla. Lo usa la validación de niveles para recorrerlos todos.
    */
-  generatePuzzle(dungeonInfo, activePlayersCount = 1, Type = null) {
+  async generatePuzzle(dungeonInfo, activePlayersCount = 1, Type = null) {
     this.clear();
 
     const Archetype =
@@ -62,7 +62,7 @@ export class PuzzleGenerator {
       PressurePlates;
 
     this.archetype = new Archetype(this.scene);
-    return this.archetype.generate(dungeonInfo, activePlayersCount);
+    return await this.archetype.generate(dungeonInfo, activePlayersCount);
   }
 
   update(players = [], delta = 0) {

@@ -65,7 +65,7 @@ export class LevelController {
     });
     const nodeCount = Archetype.nodeCount(this.playersCount);
 
-    this.info = this.dungeon.generateLevel(level, seed, seedOffset, nodeCount);
+    this.info = await this.dungeon.generateLevel(level, seed, seedOffset, nodeCount);
     // El arquetipo consulta el nivel para calibrarse (p. ej. la ventana temporal).
     this.info.level = level;
     this.info.seedOffset = seedOffset;
@@ -74,7 +74,7 @@ export class LevelController {
     this.lighting.setupCornerLights(this.info.sizeX, this.info.sizeZ, this.info.theme.color);
     
     await yieldToMain();
-    this.puzzle.generatePuzzle(this.info, this.playersCount, Archetype);
+    await this.puzzle.generatePuzzle(this.info, this.playersCount, Archetype);
     
     // Props is now properly awaited so it doesn't merge while playing
     await this.buildProps();

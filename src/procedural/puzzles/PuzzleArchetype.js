@@ -102,18 +102,21 @@ export class PuzzleArchetype {
 
   // ------------------------------------------------------------- montaje
 
-  generate(info, playersCount = 1) {
+  async generate(info, playersCount = 1) {
     this.clear();
     this.cleared = false;
     this.playersCount = clampPlayers(playersCount);
     this.theme = info.theme;
 
-    this.buildExits(info.exitPositions || [info.exitPos]);
+    const p1 = this.buildExits(info.exitPositions || [info.exitPos]);
     this.build(info);
-    // Después de `build`, que es quien llena `this.nodes`. Ninguno de los dos se espera:
-    // el nivel se juega desde el primer fotograma y el adorno entra cuando llega.
-    this.buildNodeBases();
+    
+    // Ahora las promesas SÍ se esperan: así evitamos que los modelos `.glb`
+    // entren en la escena tarde y fuercen una compilación GLSL en pleno juego.
+    const p2 = this.buildNodeBases();
     this.buildNodeCores();
+    
+    await Promise.all([p1, p2]);
     return { requiredCount: this.requiredPlateCount, exitPos: info.exitPos };
   }
 
@@ -129,13 +132,13 @@ export class PuzzleArchetype {
    * interés está en que el grupo tenga que decidir a cuál corre cuando el puzle
    * cede, con el fantasma —o los fantasmas— ya encima.
    */
-  buildExits(positions = []) {
+  async buildExits(positions = []) {
     positions.forEach(exitPos => {
       const door = new PuzzleElement('door', exitPos.x, exitPos.z);
       this.scene.add(door.mesh);
       this.exitDoors.push(door);
     });
-    this.buildExitGates(positions);
+    await this.buildExitGates(positions);
   }
 
   /**

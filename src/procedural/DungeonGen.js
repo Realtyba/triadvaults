@@ -4,6 +4,7 @@ import { createGridTexture } from '../engine/textures.js';
 import { disposeChildren, markShared } from '../engine/disposal.js';
 import { neonMaterial } from '../engine/materials.js';
 import { createWallMaterial } from '../engine/wallMaterial.js';
+import { yieldToMain } from '../utils/async.js';
 
 /**
  * Cubo unidad compartido por todos los muros y molduras.
@@ -48,11 +49,13 @@ export class DungeonGenerator {
    * @param {number} seedOffset variante al regenerar
    * @param {number} plateCount placas requeridas, = número de agentes
    */
-  generateLevel(levelNum = 1, baseSeed = 1, seedOffset = 0, plateCount = 1) {
+  async generateLevel(levelNum = 1, baseSeed = 1, seedOffset = 0, plateCount = 1) {
     this.clear();
 
     const layout = generateLayout(levelNum, baseSeed, seedOffset, plateCount);
     this.layout = layout;
+    
+    await yieldToMain();
 
     const { theme, sizeX, sizeZ } = layout;
     this.buildFloor(sizeX, sizeZ, theme);
@@ -77,6 +80,7 @@ export class DungeonGenerator {
     // Se recogen primero y se instancian después: hasta el último no se sabe cuántos
     // son, y un `InstancedMesh` necesita el total al construirse.
     const specs = [...this.boundarySpecs(sizeX, sizeZ), ...layout.walls];
+    await yieldToMain();
     this.buildWalls(specs, wallMat, trimMat);
 
     return {

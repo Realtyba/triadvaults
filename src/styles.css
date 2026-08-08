@@ -87,9 +87,9 @@
 
 /* Quien prefiera menos movimiento no debería sufrir las entradas animadas. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *:not(.loading-overlay__ring):not(.loading-overlay__text),
+  *:not(.loading-overlay__ring):not(.loading-overlay__text)::before,
+  *:not(.loading-overlay__ring):not(.loading-overlay__text)::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;

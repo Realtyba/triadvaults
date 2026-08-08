@@ -4,7 +4,7 @@ import { selectPuzzleType } from '../procedural/puzzles/index.js';
 import { GhostEnemyEntity } from '../entities/GhostEnemy.js';
 import { PropLibrary } from '../engine/PropLibrary.js';
 import { scatterProps } from '../procedural/PropScatter.js';
-import { PROP_MODELS } from '../assets/manifest.js';
+import { PROP_MODELS, propWeights } from '../assets/manifest.js';
 import { quality } from '../engine/QualitySettings.js';
 import { clampPlayers, MAX_PLAYERS } from '../../shared/constants.js';
 
@@ -91,7 +91,8 @@ export class LevelController {
     const placements = scatterProps(
       this.dungeon.layout,
       quality.get('propDensity'),
-      PROP_MODELS.length
+      PROP_MODELS.length,
+      propWeights()
     );
     this.props.build(placements);
   }

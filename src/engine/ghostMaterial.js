@@ -98,9 +98,16 @@ const FRAGMENT_DISSOLVE = /* glsl */ `
 `;
 
 /**
- * El fresnel va donde los muros ponen su borde: después de `metalnessmap_fragment`, que
- * es el último punto en el que las variables del modelo PBR existen y nadie las ha
- * consumido todavía.
+ * El fresnel va **después de `normal_fragment_maps`**, que es donde `normal` ya existe y
+ * todavía no la ha consumido la iluminación.
+ *
+ * Estuvo inyectado tras `metalnessmap_fragment` —copiando a `wallMaterial.js`, que sí
+ * puede permitírselo porque no usa la normal— y ahí el shader **no compilaba**: en
+ * `meshphysical_frag`, `normal_fragment_begin` viene un par de líneas *después*, así que
+ * `normal` era un identificador sin declarar. El fallo no se veía como un fallo: Three.js
+ * escupe el error por consola, se queda sin programa y el fantasma se dibujaba sin borde,
+ * que es exactamente lo que se ve cuando el efecto está apagado a propósito. Llevaba así
+ * en todos los presets menos `bajo`, que es el único que no llega a inyectar nada.
  *
  * `vViewPosition` la declara Three.js para cualquier material estándar, así que la
  * dirección de vista sale gratis.
@@ -153,7 +160,7 @@ export function createGhostMaterial(tier = 'rim', { color = PALETTE.GHOST_AURA }
 
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${FRAGMENT_PARS}`)
-      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>\n${FRAGMENT_RIM}`);
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${FRAGMENT_RIM}`);
 
     if (tier === 'full') {
       shader.fragmentShader = shader.fragmentShader

@@ -308,7 +308,22 @@ Decisiones que no son evidentes:
   — y `bajo`, que era lo que recibía cualquier teléfono, no tiene postprocesado. El
   presupuesto para encenderlo sale de instanciar los muros (de unas 66 llamadas de dibujo
   a 2) y de dejar una sola luz puntual de agente. Medido con `?stats=1`: 48 llamadas por
-  fotograma en una sala del nivel 1.
+  fotograma en una sala del nivel 1, cuando la sala iba sin atrezo ni modelos importados.
+- **Cifras de hoy**, mismo preset y nivel, con tres agentes, atrezo, fantasmas con modelo,
+  núcleos de puzle y compuertas: **51 llamadas al aparecer y 55 con las compuertas
+  abiertas**, sobre un techo de 60. Ese segundo punto —justo tras resolver, con marcos,
+  campos y balizas visibles— es el pico real y no se había medido nunca. En `ultra` la
+  cifra es ~67, y es correcta: el techo es el de `movil`.
+- **El límite dejó de ser el número de llamadas.** Esos 55 envíos mueven ~34 000
+  triángulos donde antes iban ~10 000, y la mayoría son de malla con esqueleto, que es la
+  clase cara en una GPU móvil. Cualquier medida futura que sólo mire llamadas puede dar
+  "dentro de presupuesto" mientras el fotograma se hunde.
+- **El atrezo se agrupa por material, no por tipo de pieza.** Las 81 piezas del pack
+  comparten un atlas byte a byte idéntico, así que comparten material y se pueden fusionar
+  en una sola geometría por sala: ocho tipos cuestan **una** llamada. Lo que se paga a
+  cambio es que esa malla ocupa la sala entera y siempre pasa el recorte por frustum —igual
+  que un `InstancedMesh`, que también se recorta entero—, así que separarla por tipo
+  "para optimizar" cambiaría una malla que siempre se dibuja por ocho que también.
 - **Los muros son dos `InstancedMesh`**, uno de cuerpos y otro de molduras. Ya compartían
   geometría y material, que ahorra memoria pero no llamadas de dibujo: cada `Mesh` seguía
   siendo un envío propio. Las cajas de colisión salen de las mismas cifras que las

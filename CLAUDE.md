@@ -63,19 +63,34 @@ logros son JSON y un fallo ahí no lo detecta ningún test.
 
 ## Modelos 3D
 
-Los `.glb` **no están en el repositorio**: se declaran en `src/assets/manifest.js` (fuente
-y licencia, todos CC0) y los baja `npm run assets`. Son tres listas: `PLAYER_MODELS` (los
-agentes), `PROP_MODELS` (atrezo de la sala) y `GHOST_MODEL`. Las dos últimas nacen vacías;
-rellenarlas es lo único que hace falta para que aparezcan, y `allModels()` mantiene el
-script de descarga y los créditos en una sola lista.
+Se declaran en `src/assets/manifest.js` —agentes, fantasma, atrezo y piezas de puzle— y
+**sí están en el repositorio**: unos 3 MB de binarios CC0 en `public/models/`. Antes no lo
+estaban, porque se bajaban uno a uno; hoy salen de packs que se descargan **enteros** desde
+su página, así que van marcados `local: true` y sin `url`, y `npm run assets` sólo comprueba
+que estén y dice el `cp` exacto que los repone. `assets-src/` guarda los originales sin
+renombrar, fuera de `public/` para no viajar duplicados en el paquete de Electron, y ése sí
+queda fuera del repositorio.
+
+**Casi todo sale del mismo pack a propósito.** Las 81 piezas del Ultimate Space Kit
+comparten un atlas de 512×512 byte a byte idéntico, y de ahí cuelga el presupuesto: como
+comparten textura pueden compartir material, y como comparten material se pueden fusionar.
+`engine/mergedModel.js` es quien agrupa por textura; `PropLibrary` hornea **todo** el atrezo
+de una sala en una geometría por material, así que ocho tipos de pieza cuestan una llamada
+de dibujo, no ocho. Meter una pieza de otro pack no rompe nada —abre un segundo cubo de
+color por vértice— pero cuesta una llamada más.
 
 **El juego arranca y se juega sin ellos**: `engine/AssetLoader.js` cae a la geometría
 primitiva de siempre, igual que el arranque sobrevive a que falte `steamworks.js`. Si los
-agentes se ven como un cilindro con un cubo por cabeza, no es un fallo: es que falta
-ejecutar `npm run assets`. El fantasma conserva además su material completo —borde y
-disolución— sobre la silueta de respaldo, así que sin modelos se ve igual de bien, solo
-más simple. El atrezo es la única excepción: sin `.glb` no se monta nada, porque unas
-cajas genéricas de adorno no aportan nada que no aporte la sala vacía.
+agentes se ven como un cilindro con un cubo por cabeza, no es un fallo: es que faltan los
+ficheros. El fantasma conserva su material completo —borde y disolución— sobre la silueta de
+respaldo; los nodos de puzle se quedan sin el núcleo flotante pero mantienen la placa, que
+es la que lleva el estado; la compuerta cae a su marco de caja. El atrezo es la única
+excepción: sin `.glb` no se monta nada, porque unas cajas genéricas de adorno no aportan
+nada que no aporte la sala vacía.
+
+`npm run validate:assets` comprueba que lo declarado tenga sentido, que los ficheros estén y
+que `CREDITS.md` —que es además el documento de correspondencia entre el nombre que usa el
+juego y la pieza original del pack— no se haya quedado atrás.
 
 ## Aspecto y rendimiento
 
@@ -84,9 +99,17 @@ cajas genéricas de adorno no aportan nada que no aporte la sala vacía.
 cabe en el fotograma; sin él, "va más fluido" es una opinión.
 
 **El presupuesto es 60 llamadas de dibujo** en el preset `movil`, nivel 1 y tres agentes.
-La referencia sin atrezo son 48. Lo que se añada por encima hay que pagarlo instanciando
-o fusionando, no ampliando el techo: ese margen es lo que mantiene el bloom encendido en
-un teléfono, que es lo que hace que el neón se lea como luz.
+Medido hoy: **51 al aparecer y 55 con las compuertas abiertas**, con atrezo, fantasmas con
+modelo y núcleos de puzle. Lo que se añada por encima hay que pagarlo instanciando o
+fusionando, no ampliando el techo: ese margen es lo que mantiene el bloom encendido en un
+teléfono, que es lo que hace que el neón se lea como luz.
+
+**Y ojo, porque el límite ya no son las llamadas.** Los mismos 55 envíos mueven ahora
+**~34 000 triángulos** donde antes iban 10 000, y la mayor parte son de malla con esqueleto
+—agentes y fantasmas—, que es la clase cara en una GPU móvil. Si el fotograma se resiente,
+la palanca es decimar los modelos (`CREDITS.md` trae el comando), no quitar piezas. En
+`ultra` la cifra sube a ~67 llamadas y ~100 000 triángulos, y ahí es correcto: el techo de
+60 es el de `movil`.
 
 Dos cosas que conviene saber antes de tocar el render, ambas explicadas a fondo en
 `docs/ARCHITECTURE.md §8`: el aspecto de la bóveda depende de `scene.environment`

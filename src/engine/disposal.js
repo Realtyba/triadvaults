@@ -24,6 +24,15 @@ export function disposeObject3D(root, parent = null) {
     // geometría ni del material: con la geometría marcada como compartida —el caso de
     // los muros— nada más lo liberaría, y se perdería una sala entera por nivel.
     if (child.isInstancedMesh) child.dispose();
+
+    // Una malla con esqueleto guarda las matrices de sus huesos en una **textura**, y esa
+    // no cuelga de la geometría ni del material: `Skeleton.dispose()` es lo único que la
+    // libera. Con el fantasma dibujado con geometría primitiva esto no existía; desde que
+    // usa un modelo con esqueleto, cada sala se dejaba atrás una textura de huesos por
+    // fantasma —tres por nivel, que no bajan ni al morir—. `SkeletonUtils.clone` le da un
+    // esqueleto propio a cada copia, así que soltarlo no toca al modelo del caché.
+    if (child.isSkinnedMesh && child.skeleton) child.skeleton.dispose();
+
     if (child.geometry && !isShared(child.geometry)) child.geometry.dispose();
     if (!child.material) return;
 

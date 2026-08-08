@@ -28,14 +28,36 @@ import { createRandom, deriveSeed } from './rng.js';
 const CLEARANCE = 2;
 
 /**
+ * Elige un tipo respetando los pesos.
+ *
+ * Sin pesos, con ocho tipos y doce piezas sale una de cada, y una sala con exactamente
+ * un bidón, exactamente un panel y exactamente una consola no parece almacenada: parece
+ * un muestrario. Los pesos son los que dejan que las cajas se repitan y que las piezas
+ * grandes aparezcan sueltas.
+ */
+function pickWeighted(rng, weights) {
+  const total = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0);
+  if (total <= 0) return rng.int(0, weights.length - 1);
+
+  let ticket = rng.float(0, total);
+  for (let i = 0; i < weights.length; i++) {
+    ticket -= Math.max(0, weights[i]);
+    if (ticket <= 0) return i;
+  }
+  return weights.length - 1;
+}
+
+/**
  * Reparte atrezo por la sala.
  *
  * @param {object} layout          el trazado ya resuelto, tal cual lo devuelve `generateLayout`
  * @param {number} density         cuántas piezas como mucho; 0 apaga el atrezo
  * @param {number} kinds           cuántos tipos de pieza hay disponibles
+ * @param {number[]} [weights]     frecuencia relativa de cada tipo, en el mismo orden.
+ *   Sale del manifest, así que es igual en los tres clientes y no rompe el sembrado.
  * @returns {Array<{kind: number, x: number, z: number, rotY: number, scale: number}>}
  */
-export function scatterProps(layout, density = 0, kinds = 1) {
+export function scatterProps(layout, density = 0, kinds = 1, weights = null) {
   if (!layout || density <= 0 || kinds <= 0) return [];
 
   const grid = layout.grid;
@@ -67,7 +89,7 @@ export function scatterProps(layout, density = 0, kinds = 1) {
   return rng.shuffle(candidates).slice(0, density).map(cell => {
     const world = grid.toWorld(cell.col, cell.row);
     return {
-      kind: rng.int(0, kinds - 1),
+      kind: weights && weights.length === kinds ? pickWeighted(rng, weights) : rng.int(0, kinds - 1),
       x: world.x,
       z: world.z,
       // Giro libre: son cajas y bidones, y alinearlos todos delataría la rejilla.

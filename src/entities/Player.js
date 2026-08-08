@@ -5,7 +5,7 @@ import { PALETTE, neonMaterial, darkBodyMaterial, prepareImportedMaterial } from
 import { clamp01 } from '../utils/math.js';
 import { quality } from '../engine/QualitySettings.js';
 import { AssetLoader, assets } from '../engine/AssetLoader.js';
-import { PLAYER_HEIGHT, playerModelUrl } from '../assets/manifest.js';
+import { PLAYER_HEIGHT, playerModel, modelUrl } from '../assets/manifest.js';
 
 export const PLAYER_COLORS = PALETTE.PLAYER; // agente 1, 2, 3
 export const PLAYER_RADIUS = 0.4;
@@ -136,7 +136,10 @@ export class PlayerEntity {
    * cenital, funciona con el agente tapado por un muro y no cuesta ni una luz.
    */
   async attachModel() {
-    const instance = await assets.instance(playerModelUrl(this.index), PLAYER_HEIGHT);
+    const model = playerModel(this.index);
+    const instance = await assets.instance(modelUrl(model), PLAYER_HEIGHT, {
+      drop: model?.drop
+    });
     // La partida puede haber terminado mientras se bajaba el fichero.
     if (!instance || this.disposed) return;
 
@@ -180,6 +183,20 @@ export class PlayerEntity {
    *
    * La emisión es además lo que recoge el bloom, o sea lo que hace que se lea de lejos
    * en un móvil.
+   *
+   * ## Un material con textura no se tiñe como uno sin ella
+   *
+   * Todo lo anterior se escribió para materiales de **color plano**, donde `color` *es*
+   * la superficie: aclararlo hacia el acento y emitir a 0,55 era lo único que hacía
+   * legible al agente.
+   *
+   * Con textura, las dos cosas dejan de valer. `color` **multiplica** al mapa base, así
+   * que teñirlo apaga el dibujo en vez de aclararlo; y una emisión plana se suma por
+   * igual a todos los píxeles, lo que tapa el atlas entero bajo una capa de color —se
+   * pierde justo lo que el modelo venía a aportar—. La emisión se modula entonces con el
+   * propio mapa base: las zonas oscuras del traje siguen oscuras y las claras son las que
+   * brillan, que además es como se comporta una luz de verdad. De lejos se lee igual; de
+   * cerca sigue siendo un modelo pintado.
    */
   tintModel(root) {
     const accent = new THREE.Color(this.colorHex);
@@ -195,8 +212,18 @@ export class PlayerEntity {
 
         if (!material.emissive) return;
         material.emissive.copy(accent);
-        material.emissiveIntensity = 0.55;
-        material.color.lerp(accent, 0.25);
+
+        if (material.map) {
+          material.emissiveMap = material.map;
+          material.emissiveIntensity = 0.22;
+          material.color.lerp(accent, 0.12);
+          // Añadir un mapa cambia el programa de sombreado: sin esto, three.js reutiliza
+          // el compilado anterior y el mapa emisivo no llega a aplicarse.
+          material.needsUpdate = true;
+        } else {
+          material.emissiveIntensity = 0.55;
+          material.color.lerp(accent, 0.25);
+        }
       });
     });
   }

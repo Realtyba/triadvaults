@@ -85,25 +85,39 @@ function collect() {
 
 for (let i = 1; i <= LEVELS; i++) {
   level.build({ level: i, seed: 11 * i, seedOffset: 0, playersCount: 3, owners });
+  // El montaje de las compuertas y de los núcleos de los nodos es asíncrono y nadie lo
+  // espera. Sin ceder el turno, el bucle construye los diez niveles antes de que se monte
+  // ninguna, y lo que este script mide deja de incluirlas.
+  await new Promise(resolve => setTimeout(resolve, 0));
   collect();
 }
 
 level.clear();
 
-// El cubo unidad de los muros lo comparten todos los niveles: liberarlo al
-// descargar uno dejaría sin geometría a los siguientes.
-let shared = 0;
+// Lo compartido a propósito no es una fuga: el cubo unidad de los muros, la placa de los
+// nodos, la base sobre la que se apoya. Liberarlo al descargar un nivel dejaría sin
+// geometría —o sin material— a los siguientes.
+//
+// La exención vale para las dos clases de recurso, igual que en `disposal.isShared`, que
+// es quien decide de verdad. Cuando aquí sólo se eximían las geometrías, un material
+// compartido salía por pantalla como fuga: la mitad de la regla, escrita dos veces.
+let sharedGeometries = 0;
+let sharedMaterials = 0;
 let leakedGeometries = 0;
 let leakedMaterials = 0;
 
 for (const geometry of geometries) {
   if (geometry.userData && geometry.userData.shared) {
-    shared++;
+    sharedGeometries++;
     continue;
   }
   if (!disposedGeometries.has(geometry)) leakedGeometries++;
 }
 for (const material of materials) {
+  if (material.userData && material.userData.shared) {
+    sharedMaterials++;
+    continue;
+  }
   if (!disposedMaterials.has(material)) leakedMaterials++;
 }
 
@@ -114,7 +128,7 @@ scene.traverse(object => {
 
 console.log(`Niveles construidos    : ${LEVELS}`);
 console.log(`Recursos vistos        : ${geometries.size} geometrías, ${materials.size} materiales`);
-console.log(`Compartidos (se quedan): ${shared}`);
+console.log(`Compartidos (se quedan): ${sharedGeometries} geometrías, ${sharedMaterials} materiales`);
 console.log(`Sin liberar            : ${leakedGeometries} geometrías, ${leakedMaterials} materiales`);
 console.log(`Siguen en la escena    : ${remaining}`);
 console.log('');

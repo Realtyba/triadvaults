@@ -96,14 +96,22 @@ export class AssetLoader {
    *
    * @param {string} url
    * @param {number} height altura objetivo en unidades de mundo
+   * @param {object}  [opts]
+   * @param {number}  [opts.fit]  si se da, se normaliza por la dimensión MAYOR y no por
+   *   la altura. Es lo que necesita el atrezo: ver `normalize`.
+   * @param {string[]} [opts.drop] nombres de nodo a quitar antes de medir y de montar
    * @returns {Promise<{root: THREE.Group, animations: THREE.AnimationClip[]}|null>}
    */
-  async instance(url, height) {
+  async instance(url, height, { fit = 0, drop = [] } = {}) {
     const asset = await this.load(url);
     if (!asset) return null;
 
     const root = cloneSkinned(asset.scene);
-    this.normalize(root, height);
+    // Antes de medir: lo que se quita no debe contar para la caja. La pistola del
+    // astronauta le añade medio brazo de anchura y, sobre todo, es una llamada de dibujo
+    // por agente que este juego no usa para nada.
+    drop.forEach(name => root.getObjectByName(name)?.removeFromParent());
+    this.normalize(root, height, fit);
 
     root.traverse(child => {
       if (!child.isMesh) return;
@@ -138,8 +146,20 @@ export class AssetLoader {
    * `SkinnedMesh.computeBoundingBox()` sí recorre los vértices aplicándoles la
    * transformación de sus huesos. Sólo necesita que las matrices de mundo estén al día,
    * y este objeto acaba de clonarse sin pasar por ningún render.
+   *
+   * ## `height` para personajes, `fit` para objetos
+   *
+   * Un personaje se normaliza por su **altura**: es la medida que tiene que casar con el
+   * juego, y lo ancho que sea es cosa suya. Un objeto, no. En este kit hay vigas de
+   * 0,14 × 1,2 × 5,95 y plataformas de 1,3 × 1,1 × 1,7; llevarlas todas a 1,1 de alto
+   * multiplica la viga por su lado corto y deja una losa de seis metros en mitad de un
+   * pasillo. Con `fit` se normaliza la dimensión **mayor**, que es la que dice cuánto
+   * ocupa una pieza de atrezo en la sala.
+   *
+   * @param {number} height altura objetivo; se ignora si se pasa `fit`
+   * @param {number} [fit]  tamaño objetivo de la dimensión mayor
    */
-  normalize(root, height) {
+  normalize(root, height, fit = 0) {
     root.updateMatrixWorld(true);
 
     const box = new THREE.Box3();
@@ -160,9 +180,11 @@ export class AssetLoader {
     });
 
     const size = box.getSize(new THREE.Vector3());
-    if (size.y <= 0) return;
+    const source = fit > 0 ? Math.max(size.x, size.y, size.z) : size.y;
+    const target = fit > 0 ? fit : height;
+    if (source <= 0) return;
 
-    const scale = height / size.y;
+    const scale = target / source;
     root.scale.setScalar(scale);
     root.position.y = -box.min.y * scale;
   }
@@ -170,17 +192,32 @@ export class AssetLoader {
   /**
    * Busca un clip por estado (`idle`, `walk`, `run`, `death`).
    *
-   * Compara por contenido y sin distinguir mayúsculas porque estos packs nombran los
-   * clips `HumanArmature|Man_Walk`, con la armadura por delante. Exigir el nombre exacto
-   * ataría la carpeta de assets a la convención de Blender de un pack concreto.
+   * Compara sin distinguir mayúsculas y **en dos pasadas**: primero el nombre exacto y
+   * sólo después por contenido.
+   *
+   * La segunda pasada es la que hace funcionar `HumanArmature|Man_Walk`, con la armadura
+   * por delante; exigir el nombre entero ataría la carpeta de assets a la convención de
+   * Blender de un pack concreto. Pero por sí sola no basta: los astronautas traen
+   * dieciocho clips, entre ellos `Walk` y `Walk_Gun`, `Run` y `Run_Gun`, `Idle` e
+   * `Idle_Gun`. Que hoy salga el bueno depende de que `Array.find` se tope antes con él,
+   * o sea del orden en que el pack los exportó. Una reexportación y los agentes empiezan
+   * a andar apuntando con un arma que ni siquiera se monta.
    *
    * @returns {THREE.AnimationClip|null}
    */
   static findClip(animations, state) {
     const wanted = CLIP_NAMES[state] || [state];
+    // `CharacterArmature|Walk_Gun` → `walk_gun`. La armadura por delante es convención
+    // del pack, no información.
+    const base = clip => clip.name.split('|').pop().toLowerCase();
+
     for (const needle of wanted) {
-      const found = animations.find(clip => clip.name.toLowerCase().includes(needle));
-      if (found) return found;
+      const exact = animations.find(clip => base(clip) === needle);
+      if (exact) return exact;
+    }
+    for (const needle of wanted) {
+      const loose = animations.find(clip => clip.name.toLowerCase().includes(needle));
+      if (loose) return loose;
     }
     return null;
   }

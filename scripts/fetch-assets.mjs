@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * Baja los modelos 3D a `public/models/`.
+ * Deja `public/models/` listo: baja lo que tenga URL, comprueba lo que no, y reescribe
+ * `CREDITS.md`.
  *
- * Los `.glb` no viven en el repositorio: se declaran en `src/assets/manifest.js` y se
- * traen con esto. El porqué está en la cabecera de ese fichero.
+ * Los modelos se declaran en `src/assets/manifest.js`; el porqué está en la cabecera de
+ * ese fichero. **Casi ninguno se descarga hoy**: vienen de packs que se bajan enteros de
+ * su página, así que van marcados `local: true` y de ellos esto sólo comprueba que estén,
+ * diciendo el `cp` exacto que los repone si no.
  *
  * **El juego funciona sin ejecutar este script**: `AssetLoader` cae a la geometría
  * primitiva de siempre. Esto es una mejora del aspecto, no un requisito para arrancar,
@@ -22,6 +25,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { allModels } from '../src/assets/manifest.js';
+import { creditsBody } from './lib/credits.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TARGET = join(ROOT, 'public', 'models');
@@ -65,8 +69,34 @@ async function verify(path) {
   }
 }
 
+/** @returns {Promise<boolean>} */
+async function exists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function download(model) {
   const path = join(TARGET, model.file);
+
+  // Los packs que se bajan enteros no tienen URL por pieza. Se comprueba que estén y se
+  // dice exactamente cómo reponerlos; intentar bajarlos sería `fetch(undefined)`, que
+  // aborta la ejecución entera con un `Failed to parse URL` que no explica nada.
+  if (model.local) {
+    if (await exists(path)) {
+      console.log(`  · ${model.file} (local)`);
+      return;
+    }
+    const from = model.origin
+      ? `assets-src/ultimate-space-kit-glb/${model.origin}`
+      : '<el original que le corresponda>';
+    throw new Error(
+      `no está, y no hay de dónde bajarlo. Repónlo con:\n      cp "${from}" public/models/${model.file}`
+    );
+  }
 
   if (!force && (await alreadyThere(path, model.bytes))) {
     console.log(`  · ${model.file} ya estaba`);
@@ -93,40 +123,9 @@ async function download(model) {
 
 /** Deja por escrito de dónde salió cada cosa. CC0 no lo exige; la trazabilidad sí. */
 async function writeCredits() {
-  const rows = allModels().map(
-    m => `| \`${m.file}\` | ${m.author} | ${m.license} | ${m.source} |`
-  ).join('\n');
-
-  const body = `# Créditos de los modelos
-
-Generado por \`scripts/fetch-assets.mjs\`. **No se edita a mano**: la lista buena está en
-\`src/assets/manifest.js\`.
-
-Todo lo de aquí es **CC0** (dominio público): se puede usar en proyectos personales,
-educativos y comerciales, y no obliga a atribuir. Esta tabla existe igualmente para que
-dentro de dos años se sepa de dónde salió cada fichero y bajo qué condiciones, que es
-justo lo que no se puede reconstruir mirando un binario.
-
-| Fichero | Autor | Licencia | Origen |
-|---|---|---|---|
-${rows}
-
-## Si hace falta que pesen menos
-
-Los modelos vienen con once animaciones y el juego usa cuatro (idle, andar, correr,
-morir). Podar las otras siete es lo que más recorta, y se hace sin añadir ninguna
-dependencia al proyecto:
-
-\`\`\`bash
-npx --yes @gltf-transform/cli optimize public/models/agent-1.glb public/models/agent-1.glb
-\`\`\`
-
-No está automatizado a propósito: es una herramienta externa que se descargaría en cada
-ejecución, y hoy el tamaño no es el cuello de botella.
-`;
-
-  await writeFile(join(TARGET, 'CREDITS.md'), body);
+  await writeFile(join(TARGET, 'CREDITS.md'), creditsBody());
 }
+
 
 console.log('\nModelos 3D → public/models/\n');
 

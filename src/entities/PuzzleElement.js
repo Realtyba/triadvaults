@@ -1,7 +1,14 @@
 import * as THREE from 'three';
-import { disposeObject3D } from '../engine/disposal.js';
+import { disposeObject3D, markShared } from '../engine/disposal.js';
 import { PALETTE, neonMaterial, darkBodyMaterial } from '../engine/materials.js';
 import { paintNode } from '../procedural/puzzles/paint.js';
+
+/**
+ * La placa de un nodo. Idéntica en todos, así que la geometría se comparte y sobrevive al
+ * cambio de nivel; lo que sí es propio de cada nodo es su **material**, porque ahí vive el
+ * estado del puzle. Ver `puzzles/paint.js`.
+ */
+const PAD_GEO = markShared(new THREE.BoxGeometry(1.2, 0.12, 1.2));
 
 export class PuzzleElement {
   constructor(type, x, z, options = {}) {
@@ -17,41 +24,29 @@ export class PuzzleElement {
     this.initMesh();
   }
 
+  /**
+   * ## Qué construye aquí cada tipo, y qué no
+   *
+   * Un `plate` monta **sólo su placa**. La base sobre la que se apoya es idéntica en todos
+   * los nodos y no cambia nunca, así que la dibuja `PuzzleArchetype` para todos a la vez en
+   * una sola instancia: con cinco nodos eran cinco envíos que ahora es uno.
+   *
+   * Un `door` no monta **nada**. Es sólo la lógica —dónde está y quién la pisa, que
+   * `checkCollision` resuelve con `this.x`/`this.z` sin mirar la malla—; el marco, el campo
+   * de fuerza y la baliza los monta el arquetipo agrupados para todas las salidas, y le
+   * pasa a cada puerta el material del campo en `doorMat`.
+   *
+   * Lo que **no** se agrupa es la placa, y es deliberado: su material *es* el estado del
+   * puzle, cuatro ficheros lo escriben por su nombre (`node.padMat`) y uno de ellos lo hace
+   * cada fotograma. Agruparla obligaría a reescribir ese contrato para ganar una llamada.
+   */
   initMesh() {
     if (this.type === 'plate') {
-      // Pressure Plate
-      const baseGeo = new THREE.BoxGeometry(1.6, 0.1, 1.6);
-      const baseMat = new THREE.MeshStandardMaterial({ color: PALETTE.PLATE_BASE, roughness: 0.5 });
-      const base = new THREE.Mesh(baseGeo, baseMat);
-      base.position.y = 0.05;
-      base.receiveShadow = true;
-      this.mesh.add(base);
-
-      const padGeo = new THREE.BoxGeometry(1.2, 0.12, 1.2);
       this.padMat = neonMaterial(PALETTE.PLATE_IDLE, { intensity: 0.3, roughness: 1 });
-      this.pad = new THREE.Mesh(padGeo, this.padMat);
+      this.pad = new THREE.Mesh(PAD_GEO, this.padMat);
       this.pad.position.y = 0.1;
+      this.pad.receiveShadow = true;
       this.mesh.add(this.pad);
-    } 
-    else if (this.type === 'door') {
-      // Exit Door Barrier
-      const frameGeo = new THREE.BoxGeometry(3.2, 4, 0.4);
-      const frameMat = darkBodyMaterial(PALETTE.STRUCTURE_DARK, { metalness: 0.9, roughness: 1 });
-      const frame = new THREE.Mesh(frameGeo, frameMat);
-      frame.position.y = 2;
-      frame.castShadow = true;
-      this.mesh.add(frame);
-
-      const forceFieldGeo = new THREE.PlaneGeometry(2.6, 3.6);
-      this.doorMat = neonMaterial(PALETTE.DOOR_LOCKED, {
-        intensity: 0.8,
-        roughness: 1,
-        opacity: 0.7
-      });
-      this.doorMat.side = THREE.DoubleSide;
-      this.forceField = new THREE.Mesh(forceFieldGeo, this.doorMat);
-      this.forceField.position.y = 2;
-      this.mesh.add(this.forceField);
     }
     else if (this.type === 'terminal') {
       // Data Terminal Node
@@ -81,6 +76,12 @@ export class PuzzleElement {
         idleIntensity: 0.3
       });
     } else if (this.type === 'door') {
+      // El material del campo de fuerza lo comparten todas las salidas y lo inyecta
+      // `PuzzleArchetype.buildExitGates`: se abren todas a la vez, así que escribirlo una
+      // vez por puerta es redundante pero inofensivo. Sin él —una puerta creada suelta,
+      // como en las validaciones— no hay nada que pintar.
+      if (!this.doorMat) return;
+
       const color = state ? PALETTE.DOOR_OPEN : PALETTE.DOOR_LOCKED;
       this.doorMat.color.setHex(color);
       this.doorMat.emissive.setHex(color);

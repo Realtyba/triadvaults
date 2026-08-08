@@ -30,7 +30,8 @@
     "validate:achievements": "node scripts/validate-achievements.js",
     "validate:rooms": "node scripts/test-rooms.js",
     "validate:leaks": "node scripts/check-leaks.js",
-    "validate": "npm run validate:levels && npm run validate:puzzles && npm run validate:movement && npm run validate:ghost && npm run validate:achievements && npm run validate:rooms && npm run validate:leaks",
+    "validate:assets": "node scripts/validate-assets.js",
+    "validate": "npm run validate:levels && npm run validate:puzzles && npm run validate:movement && npm run validate:ghost && npm run validate:achievements && npm run validate:rooms && npm run validate:leaks && npm run validate:assets",
     "test:e2e": "node scripts/e2e/run.js"
   },
   "dependencies": {

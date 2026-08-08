@@ -23,12 +23,34 @@ package-lock.json
 # con `graphify update .` (solo AST, sin coste de API).
 graphify-out/
 
-# Modelos 3D. Se bajan con `npm run assets` a partir de la lista de
-# src/assets/manifest.js, que es la que sí está versionada. Fuera del repositorio por
-# dos motivos: son binarios —cada versión se guardaría entera y el historial no
-# adelgaza nunca— y vienen de una fuente externa con su propia licencia, así que es
-# más honesto apuntar a ella que copiarla sin rastro. CREDITS.md también se genera.
+# Modelos 3D.
 #
-# El juego arranca sin ellos: los agentes se ven con la geometría primitiva de
-# siempre. Ver la cabecera de src/engine/AssetLoader.js.
-public/models/
+# Antes esto ignoraba `public/models/` entera, porque los `.glb` se bajaban uno a uno con
+# `npm run assets`: eran binarios —cada versión se guarda completa y el historial no
+# adelgaza nunca— y tenían una fuente externa a la que era más honesto apuntar que
+# copiarla sin rastro.
+#
+# Eso dejó de ser cierto. Las piezas de hoy salen de packs que se descargan **enteros**
+# desde su página, no fichero a fichero, así que no hay URL a la que apuntar: ignorarlas
+# significaría que quien clone el repositorio no tiene forma de conseguirlas y ve un juego
+# al que le falta todo su aspecto, sin que nada se lo diga. Y ya no son sólo los agentes:
+# el atrezo, los núcleos de los puzles y los marcos de las compuertas salen de aquí.
+#
+# Así que se versionan las declaradas en `src/assets/manifest.js` —unos 3 MB de binarios
+# CC0 que no van a cambiar nunca— y se sigue ignorando todo lo demás que caiga en la
+# carpeta. Los originales sin renombrar viven en `assets-src/`, fuera de `public/` para no
+# viajar duplicados en el paquete de Electron, y ésos sí quedan fuera del repositorio.
+#
+# El juego arranca igual sin ninguno: agentes de geometría primitiva, sala sin atrezo y
+# puzles procedurales. Ver la cabecera de src/assets/manifest.js.
+public/models/*
+!public/models/CREDITS.md
+!public/models/agent-*.glb
+!public/models/ghost.glb
+!public/models/prop-*.glb
+!public/models/puzzle-*.glb
+
+# Originales de los packs, sin renombrar. Son la copia de seguridad local de la que se
+# reponen los de public/models/ (el `cp` exacto lo dice `npm run assets` al fallar), pero
+# no hacen falta para jugar ni para compilar.
+assets-src/

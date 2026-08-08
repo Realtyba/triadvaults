@@ -141,11 +141,24 @@ export class EngineRenderer {
    * Soluciona los tirones de framerate al inicio del nivel o al abrirse las puertas:
    * si WebGL encuentra un material nuevo visible, detiene todo para compilar su
    * programa shader. Llamarlo en la pantalla de carga garantiza que el juego
-   * empieza fluido.
+   * empieza fluido. Al forzar temporeramente la visibilidad, evitamos que Three.js
+   * se salte los objetos ocultos (como las compuertas antes de resolver el nivel).
    */
   precompile(scene, camera) {
     if (this.renderer && scene && camera) {
+      const invisibles = [];
+      scene.traverse(obj => {
+        if (obj.visible === false) {
+          obj.visible = true;
+          invisibles.push(obj);
+        }
+      });
+      
       this.renderer.compile(scene, camera);
+      
+      invisibles.forEach(obj => {
+        obj.visible = false;
+      });
     }
   }
 

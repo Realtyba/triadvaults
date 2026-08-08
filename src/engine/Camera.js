@@ -14,7 +14,6 @@ const LOOK_AHEAD = 2.2;
  */
 const LOOK_AHEAD_DAMPING = 5;
 
-const BASE_FOV = 50;
 
 /**
  * Topes de la compensación para ventanas estrechas.
@@ -32,8 +31,6 @@ const BASE_FOV = 50;
  * cuenta sale mucho más barata, y lo que se compra con ella es que el personaje se
  * vea. Ver `applyAspect`.
  */
-const MAX_FOV = 62;
-const MAX_DISTANCE_SCALE = 1.5;
 
 /**
  * Semiancho de juego que se garantiza ver alrededor del punto de mira, en unidades.

@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { PROP_MODELS, propModel } from '../assets/manifest.js';
 import { mergedModel, alignIndexing } from './mergedModel.js';
 import { quality } from './QualitySettings.js';
+import { yieldToMain } from '../utils/async.js';
 
 /**
  * Atrezo importado, dibujado en una o dos llamadas.
@@ -127,6 +128,7 @@ export class PropLibrary {
     const castShadow = quality.get('propShadows');
 
     for (const { parts, material } of buckets.values()) {
+      await yieldToMain(); // Respirar entre fusiones pesadas
       const aligned = alignIndexing(parts);
       const merged = mergeGeometries(aligned, false);
       aligned.forEach(part => part.dispose());

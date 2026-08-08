@@ -135,6 +135,20 @@ export class EngineRenderer {
     if (this.postFX) this.postFX.setDread(amount);
   }
 
+  /**
+   * Fuerza la compilación de todos los shaders en la escena.
+   *
+   * Soluciona los tirones de framerate al inicio del nivel o al abrirse las puertas:
+   * si WebGL encuentra un material nuevo visible, detiene todo para compilar su
+   * programa shader. Llamarlo en la pantalla de carga garantiza que el juego
+   * empieza fluido.
+   */
+  precompile(scene, camera) {
+    if (this.renderer && scene && camera) {
+      this.renderer.compile(scene, camera);
+    }
+  }
+
   applyQuality() {
     if (!this.renderer) return;
     this.renderer.setPixelRatio(this.targetPixelRatio());

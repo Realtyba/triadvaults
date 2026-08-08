@@ -7,6 +7,7 @@ import { scatterProps } from '../procedural/PropScatter.js';
 import { PROP_MODELS, propWeights } from '../assets/manifest.js';
 import { quality } from '../engine/QualitySettings.js';
 import { clampPlayers, MAX_PLAYERS } from '../../shared/constants.js';
+import { yieldToMain } from '../utils/async.js';
 
 /**
  * Ciclo de vida de un nivel: mazmorra, puzle, fantasma y puntos de aparición.
@@ -46,11 +47,13 @@ export class LevelController {
     return this.startedAt ? Math.round((Date.now() - this.startedAt) / 1000) : 0;
   }
 
-  build({ level = 1, seed = 1, seedOffset = 0, playersCount = 1, owners = [] }) {
+  async build({ level = 1, seed = 1, seedOffset = 0, playersCount = 1, owners = [] }) {
     this.level = level;
     this.seed = seed;
     this.seedOffset = seedOffset;
     this.playersCount = clampPlayers(playersCount);
+
+    await yieldToMain();
 
     // El arquetipo se elige ANTES de trazar la sala: cada uno necesita un número
     // distinto de nodos, y las celdas hay que reservarlas al generar el trazado.
@@ -67,11 +70,18 @@ export class LevelController {
     this.info.level = level;
     this.info.seedOffset = seedOffset;
 
+    await yieldToMain();
     this.lighting.setupCornerLights(this.info.sizeX, this.info.sizeZ, this.info.theme.color);
+    
+    await yieldToMain();
     this.puzzle.generatePuzzle(this.info, this.playersCount, Archetype);
-    this.buildProps();
+    
+    // Props is now properly awaited so it doesn't merge while playing
+    await this.buildProps();
 
+    await yieldToMain();
     this.buildGhosts(owners);
+    
     this.startedAt = Date.now();
     return this.info;
   }
@@ -87,14 +97,14 @@ export class LevelController {
    * La cantidad sale del preset, así que dos jugadores ven distinto número de piezas.
    * Puede hacerlo porque el atrezo **no colisiona**: ver `PropScatter`.
    */
-  buildProps() {
+  async buildProps() {
     const placements = scatterProps(
       this.dungeon.layout,
       quality.get('propDensity'),
       PROP_MODELS.length,
       propWeights()
     );
-    this.props.build(placements);
+    await this.props.build(placements);
   }
 
   /**

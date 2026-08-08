@@ -130,7 +130,7 @@ export class GameApp {
    * Construcción efectiva del nivel, una vez que el loader ya se ha pintado.
    * @private
    */
-  _buildLevel({ level, seed, seedOffset = 0, playersCount }) {
+  async _buildLevel({ level, seed, seedOffset = 0, playersCount }) {
     const room = this.socket.currentRoom;
     const count = playersCount || (room ? room.players.length : 1);
 
@@ -141,7 +141,7 @@ export class GameApp {
     // Cada agente lleva su propio cazador asignado; el orden sale de la sala, que
     // es igual en todos los clientes, así que la asignación coincide para todos.
     const owners = room ? room.players.map(p => ({ uid: String(p.uid) })) : [];
-    this.level.build({ level, seed, seedOffset, playersCount: count, owners });
+    await this.level.build({ level, seed, seedOffset, playersCount: count, owners });
     this.deathCount = 0;
     // El daño del nivel lo lleva el servidor cuando hay sala; sin ella no hay quien
     // lo cuente, y los logros de "sin recibir un golpe" necesitan saberlo.
@@ -184,8 +184,13 @@ export class GameApp {
 
     this.sound.startBGM();
 
+    // Fuerza la precompilación de todos los shaders antes de quitar la pantalla de carga.
+    // WebGL es vago y compila al primer fotograma visible, lo que causaba un tirón enorme
+    // (stutter) al iniciar si se usaba material de puzle por primera vez.
+    this.renderer.precompile(this.renderer.scene, this.camera.camera);
+
     // Se quita el loader justo antes de publicar el estado de nivel, para que el
-    // primer fotograma pintado ya tenga la sala completa.
+    // primer fotograma pintado ya tenga la sala completa y precompilada.
     this.ui.hideLoading();
 
     this.ui.onLevelStarted({

@@ -59,12 +59,17 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
 
     // partida
     level: 1,
-    levelLabel: '',
+    // El bioma **crudo**: `HudView` compone con él la etiqueta, y `--accent` sale del
+    // color. Antes el motor mandaba la etiqueta ya montada y el objetivo ya traducido,
+    // lo que le obligaba a conocer la i18n y dejaba el objetivo en el idioma que hubiera
+    // al empezar el nivel: cambiarlo a mitad de partida no lo retraducía.
+    themeName: '',
+    themeColor: null,
     seedLabel: '#0000',
     roomCode: '----',
     playersCount: 1,
     health: 100,
-    objectiveText: '',
+    objectiveKey: '',
     puzzleProgress: 0,
     puzzleSolved: false,
     elapsedTime: 0,
@@ -73,7 +78,12 @@ export function createInitialState({ user, lang, audioMuted, quality, qualityOpt
     // `GameApp.publishZoom`, que es quien habla con la cámara: aquí solo se pinta.
     zoom: 100,
     paused: false,
-    canRegenerate: false,
+    // Estado del agente local en el nivel. Los escribe el motor; la interfaz decide qué
+    // modal abrir y si ofrecer regenerar. Ver `GameState.setDeaths`.
+    localAlive: true,
+    deathCount: 0,
+    // ¿Hay un nivel en curso? Lo publica `GameApp.running`.
+    running: false,
     alertMessage: '',
     // null = no cargando; string = clave i18n del mensaje que muestra el overlay.
     // Lo encienden `showLoading` / `hideLoading` de UIManager.

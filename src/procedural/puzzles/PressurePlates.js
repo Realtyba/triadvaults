@@ -24,14 +24,20 @@ export class PressurePlates extends PuzzleArchetype {
 
   build(info) {
     this.activeNodes = new Set();
+    // El segundo conjunto no es un duplicado: los dos se van alternando en `evaluate`.
+    // Hace falta comparar el fotograma actual con el anterior para saber qué placa
+    // acaba de pisarse, y crear un `Set` nuevo cada fotograma para eso —que es lo que
+    // se hacía— son sesenta asignaciones por segundo por nada.
+    this.pendingNodes = new Set();
     info.plates
       .slice(0, PressurePlates.nodeCount(this.playersCount))
       .forEach((cell, index) => this.addNode(cell, index, info.theme.color));
   }
 
   evaluate(players) {
-    const nowActive = new Set();
-    const newlyPressed = [];
+    const newlyPressed = this.beginEvaluation();
+    const nowActive = this.pendingNodes;
+    nowActive.clear();
 
     for (const node of this.nodes) {
       const pressed = this.isNodePressed(node, players);
@@ -42,14 +48,12 @@ export class PressurePlates extends PuzzleArchetype {
       if (!this.activeNodes.has(node.options.id)) newlyPressed.push(node.options.id);
     }
 
+    // Se intercambian: el de este fotograma pasa a ser el de referencia y el viejo queda
+    // libre para que lo vacíe y lo rellene el siguiente.
+    this.pendingNodes = this.activeNodes;
     this.activeNodes = nowActive;
-    const required = this.requiredPlateCount;
 
-    return {
-      solved: nowActive.size >= required,
-      progressPercent: Math.round((nowActive.size / required) * 100),
-      activeCount: nowActive.size,
-      newlyPressed
-    };
+    const required = this.requiredPlateCount;
+    return this.report(nowActive.size, required, nowActive.size >= required);
   }
 }

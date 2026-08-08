@@ -65,7 +65,7 @@ export class RelayCircuit extends PuzzleArchetype {
   }
 
   evaluate(players) {
-    const newlyPressed = [];
+    const newlyPressed = this.beginEvaluation();
     const held = this.isNodePressed(this.anchor, players);
     this.paintAnchor(held);
 
@@ -89,11 +89,6 @@ export class RelayCircuit extends PuzzleArchetype {
     }
 
     const total = this.terminals.length;
-    return {
-      solved: held && this.closed.size >= total,
-      progressPercent: Math.round((this.closed.size / total) * 100),
-      activeCount: this.closed.size,
-      newlyPressed
-    };
+    return this.report(this.closed.size, total, held && this.closed.size >= total);
   }
 }

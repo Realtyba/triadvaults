@@ -5,7 +5,7 @@
  * aquellos producían secuencias correlacionadas, y por eso los muros salían
  * amontonados y solapados en vez de repartidos.
  */
-export function mulberry32(seed) {
+function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
     a = (a + 0x6d2b79f5) >>> 0;

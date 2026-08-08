@@ -46,6 +46,22 @@ export class PlayerRegistry {
   }
 
   /**
+   * Los modelos de todos los agentes, ya en escena.
+   *
+   * Lo espera el arranque de nivel justo antes de precompilar. No convierte la descarga
+   * en un requisito —cada `attachModel` se rinde solo si el fichero no está—, sólo evita
+   * que un `SkinnedMesh` entre en la escena después de que el loader se haya ido. Ver
+   * `Player.modelReady`.
+   */
+  modelsReady() {
+    const pending = [];
+    this.players.forEach(entity => {
+      if (entity.modelReady) pending.push(entity.modelReady);
+    });
+    return Promise.all(pending);
+  }
+
+  /**
    * Concilia la escena con la lista de jugadores del servidor: crea los nuevos,
    * elimina a los que se fueron y actualiza el resto sin recrear nada.
    */

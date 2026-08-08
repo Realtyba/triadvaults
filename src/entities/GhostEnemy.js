@@ -123,7 +123,9 @@ export class GhostEnemyEntity {
     this.buildOutline();
     this.buildGroundMark();
     this.buildEyes();
-    this.attachModel();
+    // Igual que en `Player`: se guarda para poder esperarla antes de precompilar, sin
+    // que eso convierta la descarga en un requisito para jugar.
+    this.modelReady = this.attachModel();
 
     // Luz tenue y fría en vez del foco rojo: insinúa la silueta sin revelarla.
     this.light = new THREE.PointLight(0x330011, 1.4, 8);

@@ -179,7 +179,7 @@ export const PUZZLE_MODELS = {
 };
 
 /** Carpeta pública desde la que se sirven. Relativa a la raíz del sitio. */
-export const MODEL_PATH = 'models/';
+const MODEL_PATH = 'models/';
 
 /** Todo lo que hay que tener y acreditar. Una sola lista, para que no diverjan. */
 export function allModels() {

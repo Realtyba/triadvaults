@@ -40,7 +40,7 @@ export function isFullscreenSupported() {
  *
  * @returns {Promise<boolean>} si se llegó a entrar en pantalla completa
  */
-export async function enterFullscreen() {
+async function enterFullscreen() {
   const root = document.documentElement;
   const request = root.requestFullscreen || root.webkitRequestFullscreen;
   if (!request) return false;
@@ -57,7 +57,7 @@ export async function enterFullscreen() {
 }
 
 /** Sale de pantalla completa. Nunca lanza: se llama desde manejadores de eventos. */
-export async function exitFullscreen() {
+async function exitFullscreen() {
   const exit = document.exitFullscreen || document.webkitExitFullscreen;
   if (!exit || !isFullscreen()) return;
   try {
@@ -90,7 +90,7 @@ export async function lockLandscape() {
   }
 }
 
-export function unlockOrientation() {
+function unlockOrientation() {
   try {
     screen.orientation?.unlock?.();
   } catch {

@@ -37,10 +37,19 @@ export class GamepadInput {
     this.wasPressed = new Set();
     this.onConnectionChange = null;
 
-    window.addEventListener('gamepadconnected', e => this.setConnected(e.gamepad));
-    window.addEventListener('gamepaddisconnected', e => {
+    // Guardados para poder quitarlos. Ver `EngineInput.destroy`.
+    this.onConnected = e => this.setConnected(e.gamepad);
+    this.onDisconnected = e => {
       if (this.index === e.gamepad.index) this.setConnected(null);
-    });
+    };
+    window.addEventListener('gamepadconnected', this.onConnected);
+    window.addEventListener('gamepaddisconnected', this.onDisconnected);
+  }
+
+  destroy() {
+    window.removeEventListener('gamepadconnected', this.onConnected);
+    window.removeEventListener('gamepaddisconnected', this.onDisconnected);
+    this.onConnectionChange = null;
   }
 
   setConnected(pad) {

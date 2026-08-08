@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { computeGroundQuad, coverageFor, quadExitDistance, fitAspect, clampToBounds, BASE_FOV, MAX_FOV, MAX_DISTANCE_SCALE } from './cameraFraming.js';
 import { CameraShake } from './CameraShake.js';
 
 /** Cuánto se adelanta la mirada en la dirección del movimiento, en unidades. */
@@ -240,110 +241,27 @@ export class EngineCamera {
   }
 
   /**
-   * Trozo de suelo que entra en pantalla, en coordenadas relativas al punto de mira.
-   *
-   * Se obtiene proyectando hacia atrás las cuatro esquinas de la imagen y cortándolas
-   * contra el plano del suelo, en vez de con una fórmula de trigonometría: la cámara
-   * está **inclinada** 53°, así que lo que se ve del suelo no es un rectángulo centrado
-   * sino un trapecio —se ve mucho más lejos hacia el fondo que hacia delante—, y
-   * cualquier aproximación simétrica deja una franja muerta arriba o recorta la sala
-   * abajo. Ése era exactamente el fallo del encuadre anterior.
-   *
-   * Los cuatro rayos siempre cortan el suelo: con la inclinación de esta cámara y el
-   * ángulo máximo (70°), el borde superior de la imagen sigue apuntando 18° por debajo
-   * del horizonte, así que el horizonte nunca entra en cuadro.
-   *
-   * @param {number} distanceScale multiplicador de distancia con el que medir
+   * La geometría del encuadre vive en `cameraFraming.js`: son funciones puras sin estado,
+   * y ahí se pueden probar desde Node. Estos dos métodos se quedan como fachada porque los
+   * usa `scripts/validate-movement.js`, que los fija como contrato.
    */
   computeGroundQuad(distanceScale) {
-    const probe = new THREE.PerspectiveCamera(this.camera.fov, this.aspect, 0.1, 200);
-    probe.position.copy(this.baseOffset).multiplyScalar(distanceScale);
-    probe.lookAt(0, 0, 0);
-    probe.updateMatrixWorld(true);
-    probe.updateProjectionMatrix();
-
-    const corner = new THREE.Vector3();
-
-    // En este orden las cuatro esquinas de la imagen recorren el trapecio del suelo sin
-    // cruzarse: cerca-izquierda, cerca-derecha, lejos-derecha, lejos-izquierda. Un orden
-    // cualquiera daría un polígono en forma de lazo y todos los cortes saldrían mal.
-    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([nx, ny]) => {
-      corner.set(nx, ny, 1).unproject(probe).sub(probe.position);
-      // Parámetro del rayo que lleva la altura a 0. `corner.y` es siempre negativo
-      // aquí: los cuatro rayos bajan hacia el suelo.
-      const hit = corner.multiplyScalar(-probe.position.y / corner.y).add(probe.position);
-      return { x: hit.x, z: hit.z };
+    return computeGroundQuad({
+      fov: this.camera.fov,
+      aspect: this.aspect,
+      offset: this.baseOffset,
+      distanceScale
     });
   }
 
-  /**
-   * Cuánto habría que ampliar la vista para que quepa la burbuja de juego. 1 o menos = ya cabe.
-   *
-   * Mide contra `frameHalf` y no contra `roomHalf`: en una sala grande lo que se
-   * garantiza es lo que rodea al agente, no la bóveda entera. Ver `setRoomBounds`.
-   *
-   * Se comprueban **las cuatro esquinas contra el trapecio**, no las medidas
-   * contra su caja envolvente. La diferencia no es un detalle: la caja incluye el fondo
-   * lejano del trapecio, que solo se ve en una franja estrecha en lo alto de la pantalla,
-   * así que daba por cubierta una profundidad que en los laterales no existe. Con esa
-   * cuenta, un móvil tumbado se declaraba encuadrado mientras cortaba la sala por arriba
-   * y por abajo.
-   *
-   * Se apoya en que el trapecio crece **en proporción** a la distancia del ojo —es una
-   * semejanza—, así que alejar la cámara `k` veces equivale a encoger la sala `k` veces:
-   * el factor que falta sale de un solo corte por esquina, sin iterar.
-   */
+  /** Cuánto habría que ampliar para que quepa la burbuja de juego. Ver `coverageFor`. */
   roomCoverage(distanceScale) {
-    if (!this.frameHalf) return 1;
-
-    const quad = this.computeGroundQuad(distanceScale);
-    const { x: halfX, z: halfZ } = this.frameHalf;
-    let needed = 1;
-
-    for (const [cx, cz] of [[-halfX, -halfZ], [halfX, -halfZ], [halfX, halfZ], [-halfX, halfZ]]) {
-      const distance = Math.hypot(cx, cz);
-      if (distance === 0) continue;
-      const exit = this.quadExitDistance(cx / distance, cz / distance, quad);
-      if (exit > 0) needed = Math.max(needed, distance / exit);
-    }
-
-    return needed;
+    return coverageFor(this.computeGroundQuad(distanceScale), this.frameHalf);
   }
 
-  /**
-   * Distancia desde el punto de mira hasta el borde del trapecio, en la dirección dada.
-   *
-   * El punto de mira es el centro de la imagen, así que siempre está dentro del polígono
-   * y el rayo sale por exactamente un lado.
-   *
-   * @param {number} dx dirección unitaria en X
-   * @param {number} dz dirección unitaria en Z
-   * @param {Array<{x: number, z: number}>} quad
-   */
+  /** @see quadExitDistance */
   quadExitDistance(dx, dz, quad) {
-    let best = 0;
-
-    for (let i = 0; i < quad.length; i++) {
-      const a = quad[i];
-      const b = quad[(i + 1) % quad.length];
-      const ex = b.x - a.x;
-      const ez = b.z - a.z;
-
-      const denominator = ex * dz - ez * dx;
-      if (Math.abs(denominator) < 1e-9) continue; // rayo paralelo al lado
-
-      // `s` recorre el lado (0..1) y `t` es la distancia sobre el rayo. El despeje de
-      // `t` se hace por la componente **del rayo** que más lejos esté de cero; con la
-      // otra, una dirección casi paralela a un eje dividiría por casi nada.
-      const s = (a.z * dx - a.x * dz) / denominator;
-      if (s < 0 || s > 1) continue;
-      const t = Math.abs(dx) > Math.abs(dz)
-        ? (a.x + ex * s) / dx
-        : (a.z + ez * s) / dz;
-      if (t > 0) best = best === 0 ? t : Math.min(best, t);
-    }
-
-    return best;
+    return quadExitDistance(dx, dz, quad);
   }
 
   /**
@@ -381,15 +299,7 @@ export class EngineCamera {
    * @param {THREE.Vector3} target punto de mira; se modifica en el sitio
    */
   clampToRoom(target) {
-    if (!this.roomHalf) return target;
-
-    const halfX = this.roomHalf.x + OVERSCAN;
-    const halfZ = this.roomHalf.z + OVERSCAN;
-
-    target.x = THREE.MathUtils.clamp(target.x, -halfX, halfX);
-    target.z = THREE.MathUtils.clamp(target.z, -halfZ, halfZ);
-
-    return target;
+    return clampToBounds(target, this.roomHalf, OVERSCAN);
   }
 
   /**
@@ -413,30 +323,15 @@ export class EngineCamera {
   applyAspect(aspect) {
     this.aspect = aspect;
     this.camera.aspect = aspect;
-    this.camera.fov = BASE_FOV;
-    this.aspectScale = 1;
+
+    const { fov, distanceScale } = fitAspect({
+      aspect,
+      offset: this.baseOffset,
+      frameHalf: this.frameHalf
+    });
+    this.camera.fov = fov;
+    this.aspectScale = distanceScale;
     this.camera.updateProjectionMatrix();
-
-    if (this.frameHalf) {
-      // El encuadre automático se calcula con el zoom **a 1**: es la distancia base de
-      // la sala, y lo que el jugador elija se multiplica encima.
-      const needed = this.roomCoverage(this.aspectScale);
-      if (needed > 1) {
-        // Lo que da el ángulo: la huella escala con la tangente del semiángulo, así que
-        // ésta es la apertura que multiplicaría la huella por `needed`.
-        const half = Math.atan(Math.tan(THREE.MathUtils.degToRad(BASE_FOV) / 2) * needed);
-        this.camera.fov = Math.min(MAX_FOV, THREE.MathUtils.radToDeg(half) * 2);
-        this.camera.updateProjectionMatrix();
-
-        // Y lo que quede, alejando. Se vuelve a medir en vez de restar: al inclinar la
-        // cámara, abrir el ángulo agranda el fondo del trapecio más que el frente, y
-        // ese reparto desigual no se deduce de la cuenta anterior.
-        this.aspectScale = Math.min(
-          MAX_DISTANCE_SCALE,
-          Math.max(1, this.roomCoverage(this.aspectScale))
-        );
-      }
-    }
   }
 
   // ------------------------------------------------------------------ zoom

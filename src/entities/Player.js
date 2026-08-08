@@ -8,8 +8,8 @@ import { AssetLoader, assets } from '../engine/AssetLoader.js';
 import { PLAYER_HEIGHT, playerModel, modelUrl } from '../assets/manifest.js';
 
 export const PLAYER_COLORS = PALETTE.PLAYER; // agente 1, 2, 3
-export const PLAYER_RADIUS = 0.4;
-export const PLAYER_SPEED = 8.5;
+const PLAYER_RADIUS = 0.4;
+const PLAYER_SPEED = 8.5;
 
 /** Suavizado de las posiciones remotas: sin esto los otros agentes se ven a saltos. */
 const REMOTE_LERP = 12;
@@ -76,7 +76,14 @@ export class PlayerEntity {
     this.disposed = false;
 
     this.buildMesh();
-    this.attachModel();
+    /**
+     * La promesa se guarda para que el arranque de nivel pueda esperarla **antes** de
+     * precompilar. No cambia que el agente sea jugable desde el fotograma cero con su
+     * geometría base: sólo le da a quien construye el nivel la opción de esperar. Si
+     * no se espera, el `SkinnedMesh` entra en escena ya sin loader delante y su
+     * programa de shader se compila con el jugador mirando. Ver `GameApp._buildLevel`.
+     */
+    this.modelReady = this.attachModel();
   }
 
   buildMesh() {

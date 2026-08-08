@@ -10,7 +10,7 @@ export class ModalHost extends View {
     'verifyMessage',
     'verifyDevCode',
     'resendCooldown',
-    'canRegenerate',
+    'deathCount',
     'audioMuted',
     'quality',
     'controls',

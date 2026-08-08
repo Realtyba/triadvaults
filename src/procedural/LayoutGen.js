@@ -1,6 +1,9 @@
 import { createRandom, deriveSeed, seedLabel } from './rng.js';
 import { NavGrid, CELL_SIZE } from './NavGrid.js';
 import { yieldToMain } from '../utils/async.js';
+// De `palette.js` y no de `materials.js`: este fichero lo importa `validate-levels.js`
+// desde Node pelado, y `materials.js` arrastra Three.js.
+import { PALETTE } from '../engine/palette.js';
 
 /**
  * Trazado de la sala como datos puros: sin Three.js, para poder validarlo
@@ -13,12 +16,27 @@ import { yieldToMain } from '../utils/async.js';
  * `fogDensity` alta cierra el horizonte; baja deja ver la sala entera.
  */
 export const LEVEL_THEMES = [
-  { name: 'CÍAN CYBER', color: 0x00f3ff, bg: 0x060812, wall: 0x13172b, fogDensity: 0.03 },
-  { name: 'MAGENTA SYNTH', color: 0xff0077, bg: 0x12060e, wall: 0x2b1320, fogDensity: 0.042 },
-  { name: 'MATRIX ESMERALDA', color: 0x00ff66, bg: 0x05120a, wall: 0x132b1a, fogDensity: 0.026 },
-  { name: 'ÁMBAR IMPERIAL', color: 0xffaa00, bg: 0x120e05, wall: 0x2b2213, fogDensity: 0.048 },
-  { name: 'PÚRPURA CÓSMICO', color: 0x9d00ff, bg: 0x0c0512, wall: 0x20132b, fogDensity: 0.038 }
+  { name: 'CÍAN CYBER', color: PALETTE.CYAN, bg: 0x060812, wall: 0x13172b, fogDensity: 0.03 },
+  { name: 'MAGENTA SYNTH', color: PALETTE.MAGENTA, bg: 0x12060e, wall: 0x2b1320, fogDensity: 0.042 },
+  { name: 'MATRIX ESMERALDA', color: PALETTE.EMERALD, bg: 0x05120a, wall: 0x132b1a, fogDensity: 0.026 },
+  { name: 'ÁMBAR IMPERIAL', color: PALETTE.AMBER, bg: 0x120e05, wall: 0x2b2213, fogDensity: 0.048 },
+  { name: 'PÚRPURA CÓSMICO', color: PALETTE.PURPLE, bg: 0x0c0512, wall: 0x20132b, fogDensity: 0.038 }
 ];
+
+/**
+ * El bioma de un nivel, sin generar la sala.
+ *
+ * Existe para que el arranque pueda poner la atmósfera —fondo, niebla y sobre todo el
+ * reflejo del entorno— **antes** de crear las mallas. Cuando se ponía después, la sala se
+ * dibujaba sus primeros fotogramas con el entorno cián por defecto y todo el metal
+ * cambiaba de reflejo de golpe: era una buena parte del "cambia todo raro" al entrar.
+ *
+ * Es una función pura del número de nivel, igual que la línea que la usa dentro del
+ * trazado, así que las dos no pueden divergir.
+ */
+export function themeForLevel(levelNum) {
+  return LEVEL_THEMES[(levelNum - 1) % LEVEL_THEMES.length];
+}
 
 export const WALL_HEIGHT = 4.0;
 export const WALL_THICKNESS = 0.8;
@@ -230,7 +248,7 @@ function buildAttempt(levelNum, seed, plateCount, exitCount = 1) {
           : null,
     seed,
     seedLabel: seedLabel(seed),
-    theme: LEVEL_THEMES[(levelNum - 1) % LEVEL_THEMES.length],
+    theme: themeForLevel(levelNum),
     sizeX,
     sizeZ,
     cols,
@@ -265,8 +283,13 @@ export async function generateLayout(levelNum = 1, baseSeed = 1, seedOffset = 0,
   // aparición y salidas: una tirada mala —salidas en un rincón que los muros
   // acaban aislando— se corrige sola en el intento siguiente.
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    await yieldToMain();
-    
+    // Se cede cada cuatro intentos, no en cada uno. Un intento cuesta menos de un
+    // milisegundo, así que ceder antes de cada uno no evitaba ningún bloqueo: lo que
+    // hacía era **esperar un fotograma** hasta 24 veces, o sea hasta 400 ms de loader
+    // con la CPU parada. Cediendo cada cuatro, el hilo sigue libre y el caso peor baja
+    // a seis fotogramas.
+    if (attempt > 0 && attempt % 4 === 0) await yieldToMain();
+
     const seed = deriveSeed(baseSeed, levelNum, seedOffset + attempt);
     const layout = buildAttempt(levelNum, seed, plateCount, exitCount);
     layout.attempts = attempt + 1;

@@ -26,11 +26,6 @@ export function isCoarsePointer() {
   return (navigator.maxTouchPoints || 0) > 0;
 }
 
-/** Hay soporte táctil, aunque el puntero principal sea un ratón (convertibles). */
-export function hasTouchSupport() {
-  if (typeof window === 'undefined') return false;
-  return 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
-}
 
 /**
  * GPU de móvil o tableta, a partir de la cadena de `WEBGL_debug_renderer_info`.
@@ -45,11 +40,6 @@ export function isMobileGpu(rendererString) {
   return /adreno|mali|powervr|apple\s?gpu|xclipse|immortalis|videocore|tegra/i.test(rendererString);
 }
 
-/** Pantalla pequeña, con independencia del dispositivo. */
-export function isSmallViewport() {
-  if (typeof window === 'undefined') return false;
-  return Math.min(window.innerWidth, window.innerHeight) <= 600;
-}
 
 /** El aparato se sostiene en la mano: dedo **y** pantalla de mano. */
 export function isHandheld() {

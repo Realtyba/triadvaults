@@ -10,6 +10,16 @@ import { yieldToMain } from '../utils/async.js';
 /** Color de fondo y niebla por defecto, hasta que un nivel imponga su tema. */
 const DEFAULT_ATMOSPHERE = { bg: 0x060812, fogDensity: 0.035, color: 0x00f3ff };
 
+/**
+ * Trabajo de compilación que se hace del tirón antes de devolver el hilo, en ms.
+ *
+ * Es el intercambio entre "el anillo del loader gira" y "la carga termina": cada pausa
+ * cuesta un fotograma completo, así que un presupuesto pequeño anima mejor y tarda más.
+ * A 16 ms el loader se repinta a unos 30 por segundo, que ya se lee como fluido, y la
+ * espera añadida no llega a doblar lo que cuesta compilar. Ver `precompile`.
+ */
+const COMPILE_SLICE_MS = 16;
+
 export class EngineRenderer {
   constructor(container) {
     this.container = container;
@@ -137,46 +147,98 @@ export class EngineRenderer {
   }
 
   /**
-   * Fuerza la compilación de todos los shaders en la escena.
+   * Fuerza la compilación de todos los shaders antes de que el nivel se vea.
    *
-   * Soluciona los tirones de framerate al inicio del nivel o al abrirse las puertas:
-   * si WebGL encuentra un material nuevo visible, detiene todo para compilar su
-   * programa shader. Llamarlo en la pantalla de carga garantiza que el juego
-   * empieza fluido. Al forzar temporeramente la visibilidad, evitamos que Three.js
-   * se salte los objetos ocultos (como las compuertas antes de resolver el nivel).
+   * WebGL es vago: no compila el programa de un material hasta el primer fotograma en
+   * que lo dibuja. Sin esto, el tirón caía justo en los peores momentos —al aparecer el
+   * agente y al abrirse las compuertas—, que es cuando el jugador está mirando.
+   *
+   * Dos cosas que no son evidentes y que costaron el fallo que esto arregla:
+   *
+   * 1. `compile()` recorre con `traverse`, **no** con `traverseVisible`, y no mira el
+   *    frustum. O sea que los objetos ocultos —las compuertas antes de resolver el
+   *    puzle— ya entran solos. La versión anterior los forzaba a `visible = true` sin
+   *    necesidad, y de paso dejaba la escena en un estado inconsistente mientras tanto.
+   * 2. Lo que `compile()` **no** toca es el `MeshDepthMaterial` que el mapa de sombras
+   *    fabrica por su cuenta. Ahí estaba el tirón de las compuertas: sus marcos
+   *    proyectan sombra, y su programa de profundidad se compilaba en el primer
+   *    fotograma en que se hacían visibles. Eso lo cubre `warmUpShadows`.
+   *
+   * Se trocea por hijos de la escena porque el tercer argumento de `compile` existe
+   * justamente para eso: recoge las luces de la escena entera pero solo prepara los
+   * materiales del subárbol que se le pasa. Así el anillo del loader gira entre tanda y
+   * tanda en vez de quedarse clavado hasta el último shader.
    */
   async precompile(scene, camera) {
-    if (this.renderer && scene && camera) {
-      const invisibles = [];
-      const culled = [];
-      scene.traverse(obj => {
-        if (obj.visible === false) {
-          obj.visible = true;
-          invisibles.push(obj);
-        }
-        // Three.js no compila los objetos fuera del frustum, lo que causa un freeze
-        // enorme cuando objetos distantes (como las puertas) aparecen de repente.
-        if (obj.frustumCulled) {
-          obj.frustumCulled = false;
-          culled.push(obj);
-        }
-      });
-      
-      if (this.renderer.extensions.get('KHR_parallel_shader_compile') && this.renderer.compileAsync) {
-        await this.renderer.compileAsync(scene, camera);
-      } else {
-        // En navegadores sin KHR_parallel_shader_compile, compile() bloquea el hilo entero.
-        // Hacemos una compilación sincrónica normal. El CSS loader acelerado por hardware seguirá rotando.
-        this.renderer.compile(scene, camera);
-      }
-      
-      invisibles.forEach(obj => {
-        obj.visible = false;
-      });
-      culled.forEach(obj => {
-        obj.frustumCulled = true;
-      });
+    if (!this.renderer || !scene || !camera) return;
+
+    // Se cede por **tiempo gastado**, no por hijo.
+    //
+    // Ceder tras cada hijo parece más fino y es peor: cada `yieldToMain` cuesta un
+    // fotograma entero (~16 ms) se haya trabajado 30 ms o 0,2 ms, así que una escena de
+    // treinta objetos pagaba medio segundo de espera con la CPU parada para repartir un
+    // trabajo que dura bastante menos. Con un presupuesto por tanda, el número de esperas
+    // lo marca el trabajo real y el anillo del loader sigue girando igual.
+    let sliceStart = performance.now();
+    for (const child of scene.children) {
+      this.renderer.compile(child, camera, scene);
+      if (performance.now() - sliceStart < COMPILE_SLICE_MS) continue;
+      await yieldToMain();
+      sliceStart = performance.now();
     }
+
+    await this.warmUpShadows(scene, camera);
+
+    // Compilar no es enlazar. Con la extensión disponible, esto espera a que los
+    // programas estén **listos** sondeando en vez de bloquear el hilo en el
+    // `getProgramParameter` del primer dibujo. Su `compile()` interno ya no cuesta
+    // nada: encuentra todos los programas en la caché que acaba de llenar el bucle.
+    if (this.renderer.extensions.get('KHR_parallel_shader_compile') && this.renderer.compileAsync) {
+      await this.renderer.compileAsync(scene, camera);
+    }
+  }
+
+  /**
+   * Obliga al mapa de sombras a fabricar sus materiales de profundidad.
+   *
+   * No hay API para pedirlo, así que se dibuja un fotograma completo a un objetivo de
+   * 1×1: el pase de sombras se ejecuta a su resolución real —que es lo que compila los
+   * programas— y el pase de color no cuesta relleno porque no hay dónde pintarlo.
+   *
+   * Aquí sí hay que forzar `visible` y `frustumCulled`, al revés que en `precompile`:
+   * el pase de sombras respeta los dos, y las compuertas están ocultas y fuera de
+   * cámara precisamente hasta el momento en que queremos que no haya tirón.
+   */
+  async warmUpShadows(scene, camera) {
+    if (!this.renderer.shadowMap.enabled) return;
+
+    const hidden = [];
+    const culled = [];
+    scene.traverse(obj => {
+      if (obj.visible === false) {
+        obj.visible = true;
+        hidden.push(obj);
+      }
+      if (obj.frustumCulled) {
+        obj.frustumCulled = false;
+        culled.push(obj);
+      }
+    });
+
+    if (!this.shadowWarmupTarget) this.shadowWarmupTarget = new THREE.WebGLRenderTarget(1, 1);
+
+    const previousTarget = this.renderer.getRenderTarget();
+    try {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.renderer.setRenderTarget(this.shadowWarmupTarget);
+      this.renderer.render(scene, camera);
+    } finally {
+      this.renderer.setRenderTarget(previousTarget);
+      hidden.forEach(obj => { obj.visible = false; });
+      culled.forEach(obj => { obj.frustumCulled = true; });
+    }
+
+    await yieldToMain();
   }
 
   applyQuality() {
@@ -208,6 +270,7 @@ export class EngineRenderer {
   destroy() {
     if (this.postFX) this.postFX.destroy();
     if (this.environment) this.environment.dispose();
+    if (this.shadowWarmupTarget) this.shadowWarmupTarget.dispose();
     if (this.unwatchViewport) this.unwatchViewport();
     if (this.unsubscribeQuality) this.unsubscribeQuality();
     if (this.renderer) this.renderer.dispose();

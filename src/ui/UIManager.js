@@ -16,7 +16,7 @@ import { ModalHost } from './modals/ModalHost.js';
 import { BLOCKING_MODALS } from './modals/definitions.js';
 import { AuthController } from './controllers/AuthController.js';
 import { RoomController } from './controllers/RoomController.js';
-import { el } from './dom.js';
+import { el, hexColor } from './dom.js';
 import { icon } from './icons.js';
 import { quality } from '../engine/QualitySettings.js';
 import { bindings } from '../engine/Bindings.js';
@@ -32,6 +32,10 @@ import {
 } from '../engine/fullscreen.js';
 import { offlineStore } from '../network/OfflineStore.js';
 import { mirrorToSteam, reconcileWithSteam } from '../network/SteamBridge.js';
+import { NEXT_LEVEL_DELAY_MS } from '../game/tuning.js';
+import { GameState } from '../game/GameState.js';
+import { GameCommands } from '../game/GameCommands.js';
+import { OfflineBridge } from '../game/OfflineBridge.js';
 
 const AUDIO_KEY = 'triad_audio_muted';
 
@@ -46,10 +50,11 @@ export class UIManager {
   /** Margen para que llegue el reenganche a sala antes de darla por perdida. */
   static REJOIN_GRACE_MS = 2500;
 
-  constructor({ socket, sound, game }) {
+  constructor({ socket, sound, game, touchInput }) {
     this.socket = socket;
     this.sound = sound;
     this.game = game;
+    this.touchInput = touchInput;
 
     this.i18n = new I18nManager();
     this.api = new ApiClient();
@@ -67,14 +72,36 @@ export class UIManager {
       })
     );
 
+    /**
+     * Las dos mitades de la frontera con el motor.
+     *
+     * `state` es lo único que el motor puede escribir del almacén —lo lee él desde aquí,
+     * `game.state`— y `commands` es lo único que esta clase y sus vistas pueden pedirle al
+     * motor. Fuera de estas dos, ni la interfaz navega `game.loQueSea` ni el motor conoce
+     * `UIManager`. La excepción, declarada y con nombre, es `framePort`.
+     */
+    this.state = new GameState(this.store);
+    this.commands = new GameCommands(game);
+    /** El servidor que no hay cuando se juega sin conexión. Ver `OfflineBridge`. */
+    this.offline = new OfflineBridge({
+      commands: this.commands,
+      store: this.store,
+      catalog: () => this.store.get().achievementCatalog,
+      onUnlocked: keys => this.onAchievementsUnlocked(keys),
+      onVictory: () => this.showVictory()
+    });
+
     // Un convertible cambia de puntero al plegarse y un móvil al rotar, así que la
     // clase del documento y el estado se recalculan, no se fijan al arrancar.
     this.applyViewportState();
-    watchViewport(() => this.applyViewportState());
+    // Las bajas se guardan. Antes se descartaban las dos, así que aunque hubiera un
+    // camino de cierre no habría forma de soltar estos dos observadores. Ver `destroy`.
+    this.teardown = [];
+    this.teardown.push(watchViewport(() => this.applyViewportState()));
 
     // También se sale de pantalla completa con Escape o con el gesto del sistema, sin
     // pasar por el botón: el estado se escucha en vez de deducirlo de la última acción.
-    watchFullscreen(active => this.store.patch({ isFullscreen: active }));
+    this.teardown.push(watchFullscreen(active => this.store.patch({ isFullscreen: active })));
 
     // Sesión a medias (usuario sin token): se limpia para no mostrar un menú inservible.
     if (!session.isValid()) session.clear();
@@ -88,6 +115,7 @@ export class UIManager {
 
     this.buildSkeleton();
     this.mountViews();
+    this.watchWakeLock();
     this.bindEvents();
     this.registerActions();
 
@@ -163,7 +191,7 @@ export class UIManager {
     this.lobby = new LobbyView(this.nodes.lobby, this.ctx);
     this.hud = new HudView(this.nodes.hud, this.ctx);
     this.edgeMarkers = new EdgeMarkersView(this.nodes.edge, this.ctx);
-    this.touchControls = new TouchControlsView(this.nodes.touch, this.ctx, this.game.input.touch);
+    this.touchControls = new TouchControlsView(this.nodes.touch, this.ctx, this.touchInput);
     this.modals = new ModalHost(this.nodes.modal, this.ctx);
     this.rotateNotice = new RotateNotice(this.nodes.rotate, this.ctx);
     this.reconnect = new ReconnectingOverlay(this.nodes.reconnect, this.ctx);
@@ -186,6 +214,13 @@ export class UIManager {
     this.subscribeView(this.loadingOverlay, LoadingOverlay.keys);
 
     this.store.subscribe(['view'], s => this.applyViewVisibility(s));
+    // La caída del agente la publica el motor como dato (`localAlive`), no abriendo el
+    // modal él mismo: así pasa por `openModal` y respeta que un modal bloqueante —la
+    // verificación de la cuenta— no se desplaza. Antes se colaba con un `patch` directo.
+    this.store.subscribe(['localAlive'], s => {
+      if (s.localAlive === false) this.openModal('game-over');
+      else if (this.store.get().modal === 'game-over') this.store.patch({ modal: null });
+    });
     this.store.subscribe(['lang', 'audioMuted'], () => this.renderTopBar());
     // Los avisos que llegaron mientras había un modal bloqueante salen ahora.
     this.store.subscribe(['modal'], s => {
@@ -203,8 +238,42 @@ export class UIManager {
     this.loadingOverlay.render(state, null);
   }
 
+  /**
+   * Vistas que el bucle de juego dibuja **directamente**, sin pasar por el estado.
+   *
+   * Es la única excepción a la regla "el motor sólo escribe en `GameState`", y está aquí
+   * para que sea una excepción **con nombre** y no un `this.ui.loQueSea` perdido en
+   * mitad del bucle.
+   *
+   * Para entrar en este puerto hay que cumplir las dos cosas: que el dato se recalcule
+   * por fotograma (o casi) y que un `patch` por tick cueste más que el propio dibujo.
+   * Hoy sólo lo cumple `EdgeMarkersView`: pasarla por el estado significaría construir
+   * doce veces por segundo un array nuevo —que nunca puede cortocircuitar por
+   * `Object.is`— y notificar a todos los suscriptores, cuando su repintado son cinco
+   * `transform` que resuelve el compositor. La vista existe precisamente para no hacer
+   * eso; encauzarla por el estado desharía su razón de ser.
+   */
+  get framePort() {
+    return { edgeMarkers: this.edgeMarkers };
+  }
+
   subscribeView(view, keys) {
-    this.store.subscribe(keys, (state, dirty) => view.render(state, dirty));
+    this.teardown.push(this.store.subscribe(keys, (state, dirty) => view.render(state, dirty)));
+  }
+
+  /**
+   * Suelta lo que esta capa tiene enganchado fuera de sí misma.
+   *
+   * En el navegador no lo llama nadie **a propósito**: cerrar la pestaña ya lo libera
+   * todo, y engancharlo a `pagehide` rompería la restauración desde la caché de
+   * retroceso. Los consumidores reales son Electron al recargar el renderer y el
+   * comprobador de fugas. Ver `GameApp.destroy`.
+   */
+  destroy() {
+    this.teardown.forEach(off => off && off());
+    this.teardown = [];
+    this.offline.destroy();
+    clearTimeout(this.rejoinTimer);
   }
 
   applyViewVisibility(state) {
@@ -298,6 +367,8 @@ export class UIManager {
       'game:offline': () => this.startOffline(),
 
       'game:pause': () => this.togglePause(true),
+      // El mando alterna; el botón del HUD fuerza. Son dos gestos distintos.
+      'game:pause-toggle': () => this.togglePause(),
       'game:resume': () => this.togglePause(false),
       'game:respawn': () => this.requestRespawn(),
       'game:regenerate': () => this.requestRegenerate(),
@@ -309,10 +380,12 @@ export class UIManager {
       'modal:close': () => this.closeModal(),
 
       'view:fullscreen': () => this.toggleFullscreen(),
-      'view:zoom': () => this.game.cycleZoom(),
+      'view:zoom': () => this.commands.cycleZoom(),
 
       'app:lang': ({ lang }) => this.setLanguage(lang),
       'app:audio': () => this.toggleAudio(),
+      // Para que el motor pueda avisar de un fallo sin conocer la i18n.
+      'app:alert': ({ key }) => this.alert(this.ctx.t(key)),
       'app:quality': ({ level }) => this.store.patch({ quality: quality.set(level) }),
 
       'input:rebind': ({ bind, slot }) => this.captureBinding(bind, Number(slot)),
@@ -335,26 +408,16 @@ export class UIManager {
 
     // Volver a pulsar el hueco que ya estaba capturando lo cancela.
     if (this.store.get().capturingBind === key) {
-      this.game.input.cancelCapture();
+      this.commands.cancelKeyCapture();
       return this.store.patch({ capturingBind: null });
     }
 
     this.store.patch({ capturingBind: key });
-    this.game.input.captureNextKey(code => {
+    this.commands.captureNextKey(code => {
       const result = bindings.assign(action, slot, code);
       this.store.patch({ controls: structuredClone(bindings.map), capturingBind: null });
       if (!result.ok && result.reason === 'reserved') this.alert(this.ctx.t('bind_reserved'));
     });
-  }
-
-  /** El mando aparece y desaparece en caliente; los ajustes lo reflejan. */
-  setGamepad(name) {
-    this.store.patch({ gamepadName: name });
-  }
-
-  /** El dedo se detecta al primer toque, no al arrancar: se refleja igual que el mando. */
-  setTouchActive() {
-    this.store.patch({ inputMode: 'touch' });
   }
 
   // -------------------------------------------------- pantalla completa
@@ -388,12 +451,16 @@ export class UIManager {
   /**
    * Vuelve a pedir el centinela de pantalla al regresar de segundo plano.
    *
-   * Aparte de `enterPlaySession` porque aquí **no** hay que volver a pedir pantalla
-   * completa: sin un gesto reciente el navegador la niega, y pedirla en cada cambio de
-   * pestaña sólo llenaría la consola de rechazos.
+   * Se escucha aquí y no en el motor: el sistema suelta el centinela al irse a segundo
+   * plano y no lo devuelve solo, así que sin esto volver de una llamada deja el móvil
+   * apagándose otra vez. **No** se vuelve a pedir pantalla completa: sin un gesto
+   * reciente el navegador la niega, y pedirla en cada cambio de pestaña sólo llenaría
+   * la consola de rechazos.
    */
-  restoreWakeLock() {
-    requestWakeLock();
+  watchWakeLock() {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this.store.get().running) requestWakeLock();
+    });
   }
 
   /** Al volver al menú se suelta el centinela; la pantalla puede apagarse otra vez. */
@@ -592,7 +659,7 @@ export class UIManager {
   /** Entrada a una partida ya empezada: se reconstruye su nivel desde la semilla de la sala. */
   joinRunningLevel(room) {
     this.store.patch({ room, roomCode: room.code, modal: null, paused: false });
-    this.game.startLevel({
+    this.commands.startLevel({
       level: room.currentLevel,
       seed: room.seed,
       seedOffset: room.seedOffset,
@@ -610,7 +677,7 @@ export class UIManager {
   applyThemeAccent(colorHex) {
     if (colorHex === undefined || colorHex === null) return;
 
-    const hex = `#${colorHex.toString(16).padStart(6, '0')}`;
+    const hex = hexColor(colorHex);
     const r = (colorHex >> 16) & 255;
     const g = (colorHex >> 8) & 255;
     const b = colorHex & 255;
@@ -619,61 +686,21 @@ export class UIManager {
     document.documentElement.style.setProperty('--accent-soft', `rgba(${r}, ${g}, ${b}, 0.14)`);
   }
 
-  onLevelStarted({
-    level,
-    playersCount,
-    seedLabel,
-    themeName,
-    themeColor,
-    roomCode,
-    requiredPlates,
-    objectiveKey,
-    health
-  }) {
-    this.applyThemeAccent(themeColor);
-    // Pantalla completa y apaisado se piden al entrar en la bóveda, no al arrancar el
-    // juego: las dos APIs exigen un gesto reciente del jugador, y pulsar Jugar lo es.
-    this.enterPlaySession();
-
-    // El objetivo lo dicta el arquetipo de puzle, no el número de placas: con
-    // secuencias y relevos la cuenta ya no describe lo que hay que hacer.
-    const key =
-      objectiveKey ||
-      (requiredPlates === 1 ? 'solo_objective' : requiredPlates === 2 ? 'duo_objective' : 'squad_objective');
-
-    this.store.patch({
-      view: 'hud',
-      modal: null,
-      paused: false,
-      level,
-      levelLabel: `${level} · ${themeName}`,
-      seedLabel,
-      roomCode: roomCode || 'LOCAL',
-      lastRoomCode: roomCode || this.store.get().lastRoomCode,
-      playersCount,
-      health,
-      objectiveText: this.ctx.t(key),
-      puzzleProgress: 0,
-      puzzleSolved: false,
-      canRegenerate: false
-    });
-  }
-
-  setHealth(health) {
-    this.store.patch({ health: Math.max(0, health) });
-  }
-
-  setObjectiveProgress(progress, solved) {
-    this.store.patch({ puzzleProgress: progress, puzzleSolved: solved });
-  }
-
-  onLocalDeath(deathCount) {
-    // Tras varias muertes seguidas se ofrece regenerar el nivel por si quedó injugable.
-    this.store.patch({ modal: 'game-over', canRegenerate: deathCount >= 3, paused: false });
-  }
-
-  onLocalRespawn() {
-    this.store.patch({ modal: null });
+  /**
+   * El motor ha terminado de montar un nivel.
+   *
+   * Es un **aviso**, no un traspaso de datos: esos ya viajaron por `GameState.startLevel`
+   * antes de esta llamada. Aquí sólo queda lo que es interfaz —entrar en el HUD, cerrar lo
+   * que hubiera abierto y teñirse con el color del bioma—.
+   *
+   * Pantalla completa y apaisado **ya se pidieron**, al principio de `GameApp._buildLevel`.
+   * Aquí llegaban demasiado tarde: cambiar de tamaño reasigna los búferes del
+   * postprocesado, y hacerlo justo después de quitar el loader metía un salto de
+   * resolución en el primer fotograma que el jugador veía de la sala.
+   */
+  onLevelStarted() {
+    this.applyThemeAccent(this.store.get().themeColor);
+    this.store.patch({ view: 'hud', modal: null, paused: false });
   }
 
   requestRespawn() {
@@ -683,13 +710,13 @@ export class UIManager {
       return;
     }
     // Solitario sin sala: la reaparición se resuelve en el cliente.
-    this.game.respawn(this.game.players.localUid, 100, Date.now() % 7);
+    this.commands.respawnLocal();
   }
 
   requestRegenerate() {
-    this.store.patch({ modal: null, canRegenerate: false });
+    this.store.patch({ modal: null });
     if (this.socket.currentRoom) this.socket.requestRegenerate();
-    else this.game.regenerateLevel({});
+    else this.commands.regenerateLevel();
   }
 
   showVictory() {
@@ -701,47 +728,15 @@ export class UIManager {
   /**
    * Arranca una partida en solitario que no necesita servidor.
    *
-   * Se retoma por el nivel más alto alcanzado en local, no desde el uno: es una
-   * partida guardada, no una demostración. La semilla se sortea una vez por sesión y
-   * no se guarda, porque el determinismo solo hace falta para que dos clientes de una
-   * sala construyan la misma bóveda, y aquí no hay segundo cliente.
+   * Lo que ocurre después —anotar el progreso, resolver los logros, encadenar niveles— lo
+   * lleva `OfflineBridge`: son reglas de partida, y no tenían por qué vivir en la capa que
+   * pinta. Aquí sólo queda la puerta de acceso, que sí es de esta capa.
    */
   startOffline() {
     // Era el único camino al juego sin comprobar la cuenta, y el que dejaba a un
     // correo sin verificar acumular partidas que después se sincronizaban.
     if (!this.requireVerifiedAccount()) return;
-
-    this.offlineSeed = Math.floor(Math.random() * 1e9);
-    this.store.patch({ offline: true, modal: null });
-    this.game.startLevel({
-      level: offlineStore.nextLevel,
-      seed: this.offlineSeed,
-      seedOffset: 0,
-      playersCount: 1
-    });
-  }
-
-  /**
-   * Nivel superado sin sala: lo que en línea hace el servidor, aquí lo hace el
-   * cliente contra el almacén local, y la partida encadena al siguiente nivel con la
-   * misma pausa de dos segundos que la versión con sala.
-   */
-  onOfflineLevelComplete(run) {
-    const { unlocked } = offlineStore.recordLevel(run, this.store.get().achievementCatalog);
-
-    this.store.patch({ offlinePending: offlineStore.pendingCount });
-    if (unlocked.length > 0) this.onAchievementsUnlocked(unlocked);
-
-    this.showVictory();
-    setTimeout(() => {
-      if (this.store.get().view !== 'hud') return; // se salió al menú mientras tanto
-      this.game.startLevel({
-        level: run.level + 1,
-        seed: this.offlineSeed,
-        seedOffset: 0,
-        playersCount: 1
-      });
-    }, 2000);
+    this.offline.start();
   }
 
   /**
@@ -838,7 +833,7 @@ export class UIManager {
 
   stopGame() {
     this.leavePlaySession();
-    if (this.game) this.game.stop();
+    this.commands.stop();
   }
 
   /** Cerrar el menú de pausa también reanuda; el resto de modales no tocan la pausa. */

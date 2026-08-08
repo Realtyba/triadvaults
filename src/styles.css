@@ -1799,14 +1799,23 @@ label {
 }
 
 /* ------------------------------------------- loading overlay */
+/*
+ * Opaco y sin desenfoque, y no es una decisión estética.
+ *
+ * Con `rgba(...)` + `backdrop-filter: blur()` el compositor tiene que releer y
+ * desenfocar el framebuffer entero —con el canvas WebGL debajo— en cada fotograma.
+ * O sea que la animación del anillo dependía del mismo proceso de GPU que estaba
+ * compilando shaders, que es exactamente lo que este overlay tapa: el anillo se
+ * quedaba clavado justo cuando más falta hacía que girase. Opaco, el navegador
+ * puede además saltarse el dibujo de lo que hay detrás.
+ */
 .loading-overlay {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(3, 5, 12, 0.88);
-  backdrop-filter: blur(6px);
+  background: var(--bg-dark);
   z-index: 9600;
 }
 

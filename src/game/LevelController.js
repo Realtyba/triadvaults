@@ -47,11 +47,24 @@ export class LevelController {
     return this.startedAt ? Math.round((Date.now() - this.startedAt) / 1000) : 0;
   }
 
+  /**
+   * Los modelos del nivel que se montan por su cuenta. Hoy sólo los fantasmas: el atrezo
+   * y las piezas del puzle ya se esperan dentro de `build`. Ver `PlayerRegistry.modelsReady`.
+   */
+  modelsReady() {
+    return Promise.all(this.ghosts.map(ghost => ghost.modelReady).filter(Boolean));
+  }
+
   async build({ level = 1, seed = 1, seedOffset = 0, playersCount = 1, owners = [] }) {
     this.level = level;
     this.seed = seed;
     this.seedOffset = seedOffset;
     this.playersCount = clampPlayers(playersCount);
+    // Los campos de flujo están indexados por celda, y las celdas de dos salas
+    // distintas se llaman igual. Sólo se vaciaban en `clear()`, que no corre al cambiar
+    // de nivel: si un agente reaparecía en la misma celda que en el nivel anterior, al
+    // fantasma se le daba la ruta de la sala vieja y rodeaba muros que ya no existían.
+    if (this.flowFields) this.flowFields.clear();
 
     await yieldToMain();
 
@@ -65,7 +78,14 @@ export class LevelController {
     });
     const nodeCount = Archetype.nodeCount(this.playersCount);
 
-    this.info = await this.dungeon.generateLevel(level, seed, seedOffset, nodeCount);
+    const info = await this.dungeon.generateLevel(level, seed, seedOffset, nodeCount);
+    // `generateLevel` devuelve `null` cuando otra generación la ha adelantado —dos
+    // `startLevel` solapados, o una reconexión que llega tarde—. Antes se le escribía
+    // encima sin comprobarlo, y el `TypeError` resultante salía de `_buildLevel` sin
+    // que nadie quitara el loader: el cuelgue permanente que se veía al reconectar.
+    if (!info) return null;
+
+    this.info = info;
     // El arquetipo consulta el nivel para calibrarse (p. ej. la ventana temporal).
     this.info.level = level;
     this.info.seedOffset = seedOffset;

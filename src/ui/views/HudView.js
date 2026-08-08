@@ -1,4 +1,4 @@
-import { esc, setText, setWidth, toggleClass } from '../dom.js';
+import { esc, setText, setWidth, toggleClass, formatClock } from '../dom.js';
 import { icon } from '../icons.js';
 
 /**
@@ -11,12 +11,12 @@ import { icon } from '../icons.js';
 export class HudView {
   static keys = [
     'level',
-    'levelLabel',
+    'themeName',
     'seedLabel',
     'roomCode',
     'playersCount',
     'health',
-    'objectiveText',
+    'objectiveKey',
     'puzzleProgress',
     'puzzleSolved',
     'elapsedTime',
@@ -134,7 +134,9 @@ export class HudView {
     // Las etiquetas fijas están en el esqueleto, así que un cambio de idioma sí lo rehace.
     if (!this.refs || this.lang !== state.lang) this.mount();
 
-    setText(this.refs.level, state.levelLabel || state.level);
+    // La etiqueta se compone aquí y no llega hecha: es presentación, y así el bioma se
+    // vuelve a escribir cuando cambia el idioma igual que todo lo demás del HUD.
+    setText(this.refs.level, state.themeName ? `${state.level} · ${state.themeName}` : state.level);
     setText(this.refs.seed, state.seedLabel);
     setText(this.refs.code, state.roomCode || '----');
     setText(this.refs.agents, `${state.playersCount} / 3`);
@@ -148,8 +150,12 @@ export class HudView {
     this.renderInputMode(state.inputMode);
     this.renderHint(state.inputMode);
 
-    if (this.refs.objective.textContent !== state.objectiveText) {
-      this.refs.objective.innerHTML = esc(state.objectiveText);
+    // El objetivo se traduce en cada pintado, no una vez al empezar el nivel: antes
+    // llegaba ya traducido desde el motor y cambiar de idioma a mitad de partida lo
+    // dejaba en el anterior.
+    const objective = state.objectiveKey ? this.t(state.objectiveKey) : '';
+    if (this.refs.objective.textContent !== objective) {
+      this.refs.objective.innerHTML = esc(objective);
     }
     setWidth(this.refs.progressFill, state.puzzleProgress);
   }
@@ -183,12 +189,8 @@ export class HudView {
     toggleClass(this.refs.team, 'hidden', teammates.length === 0);
   }
 
-  /** Formatea segundos como MM:SS. */
   renderTimer(seconds) {
-    const total = Math.max(0, Math.floor(seconds));
-    const m = String(Math.floor(total / 60)).padStart(2, '0');
-    const s = String(total % 60).padStart(2, '0');
-    setText(this.refs.timer, `${m}:${s}`);
+    setText(this.refs.timer, formatClock(seconds));
   }
 
   renderInputMode(mode = 'keyboard') {

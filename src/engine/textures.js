@@ -62,64 +62,83 @@ export function setMaxAnisotropy(value) {
  * @param {string} variant  clave de caché aparte. `repeat` es estado de la propia
  *   textura, así que dos superficies con escalas distintas —el suelo de la sala y
  *   la plataforma exterior— necesitan instancias separadas o se pisan entre sí.
- * @param {{x: number, y: number}} [repeat] escala de repetición. Va en la clave de
- *   caché justo por lo anterior: quien la pedía tenía que mutar el objeto devuelto,
- *   y como el mismo tema se repite cada cinco niveles, dos superficies del mismo
- *   color compartían instancia y la última en escribir ganaba.
+ * @param {{x: number, y: number}} [repeat] escala de repetición. Cada valor distinto
+ *   devuelve un **clon** con esa escala puesta: instancias separadas, para que no se
+ *   pisen, pero una sola imagen detrás de todas ellas.
  */
 export function createGridTexture(colorHex, variant = 'default', repeat = null) {
-  const repeatKey = repeat ? `:${repeat.x}x${repeat.y}` : '';
-  return cached(`grid:${colorHex}:${variant}${repeatKey}`, () => {
-    const size = 256;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
+  const base = cached(`grid:${colorHex}:${variant}`, () => buildGridTexture(colorHex));
+  if (!repeat) return base;
 
-    const ctx = canvas.getContext('2d');
-    const color = new THREE.Color(colorHex);
-    const rgb = `${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)}`;
-
-    ctx.fillStyle = 'rgba(0, 0, 0, 0)';
-    ctx.fillRect(0, 0, size, size);
-
-    // Línea principal del borde de la celda.
-    ctx.strokeStyle = `rgba(${rgb}, 0.55)`;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(1, 1, size - 2, size - 2);
-
-    // Subdivisión interior, más apagada.
-    ctx.strokeStyle = `rgba(${rgb}, 0.14)`;
-    ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) {
-      const p = (size / 4) * i;
-      ctx.beginPath();
-      ctx.moveTo(p, 0);
-      ctx.lineTo(p, size);
-      ctx.moveTo(0, p);
-      ctx.lineTo(size, p);
-      ctx.stroke();
-    }
-
-    // Marcas de esquina: dan escala y hacen que la rejilla parezca diseñada.
-    ctx.strokeStyle = `rgba(${rgb}, 0.8)`;
-    ctx.lineWidth = 3;
-    const tick = size * 0.12;
-    [[0, 0, 1, 1], [size, 0, -1, 1], [0, size, 1, -1], [size, size, -1, -1]].forEach(([x, y, dx, dy]) => {
-      ctx.beginPath();
-      ctx.moveTo(x, y + dy * tick);
-      ctx.lineTo(x, y);
-      ctx.lineTo(x + dx * tick, y);
-      ctx.stroke();
-    });
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.anisotropy = maxAnisotropy;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    if (repeat) texture.repeat.set(repeat.x, repeat.y);
-    return texture;
+  // Una imagen, varias escalas.
+  //
+  // El `repeat` sale de las dimensiones de la sala, que tienen nueve valores posibles.
+  // Metiéndolo en la clave —que es como estaba— cada combinación de bioma y tamaño
+  // dibujaba y **subía a la GPU** un lienzo entero de 256×256 idéntico al anterior: hasta
+  // noventa copias byte a byte de la misma rejilla.
+  //
+  // Un clon comparte el `source` con el original, así que la subida ocurre una sola vez y
+  // lo único que se duplica es el objeto de textura, que es un puñado de campos. Se
+  // guarda en la misma caché para que `disposeTextureCache` siga siendo el único dueño:
+  // devolver algo que nadie libera habría cambiado una fuga pequeña por otra peor.
+  return cached(`grid:${colorHex}:${variant}:${repeat.x}x${repeat.y}`, () => {
+    const clone = base.clone();
+    clone.repeat.set(repeat.x, repeat.y);
+    clone.needsUpdate = true;
+    return clone;
   });
+}
+
+/** Dibuja la rejilla. Una sola vez por color y variante; el `repeat` va en los clones. */
+function buildGridTexture(colorHex) {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext('2d');
+  const color = new THREE.Color(colorHex);
+  const rgb = `${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)}`;
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0)';
+  ctx.fillRect(0, 0, size, size);
+
+  // Línea principal del borde de la celda.
+  ctx.strokeStyle = `rgba(${rgb}, 0.55)`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, size - 2, size - 2);
+
+  // Subdivisión interior, más apagada.
+  ctx.strokeStyle = `rgba(${rgb}, 0.14)`;
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const p = (size / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(p, 0);
+    ctx.lineTo(p, size);
+    ctx.moveTo(0, p);
+    ctx.lineTo(size, p);
+    ctx.stroke();
+  }
+
+  // Marcas de esquina: dan escala y hacen que la rejilla parezca diseñada.
+  ctx.strokeStyle = `rgba(${rgb}, 0.8)`;
+  ctx.lineWidth = 3;
+  const tick = size * 0.12;
+  [[0, 0, 1, 1], [size, 0, -1, 1], [0, size, 1, -1], [size, size, -1, -1]].forEach(([x, y, dx, dy]) => {
+    ctx.beginPath();
+    ctx.moveTo(x, y + dy * tick);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x + dx * tick, y);
+    ctx.stroke();
+  });
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = maxAnisotropy;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
 }
 
 /**
@@ -246,7 +265,12 @@ export function createParticleTexture() {
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, size, size);
 
-    return new THREE.CanvasTexture(canvas);
+    const texture = new THREE.CanvasTexture(canvas);
+    // Es un degradado de color, no un mapa de datos: sin declararlo, three lo trata como
+    // lineal y la mota sale más clara en el centro de lo que se dibujó. Los mapas de
+    // rugosidad y de relieve de arriba **no** lo llevan, y ahí es correcto.
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
   });
 }
 

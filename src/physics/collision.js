@@ -11,7 +11,7 @@ import { clamp01 } from '../utils/math.js';
 const tmpFull = new THREE.Vector3();
 const tmpAxis = new THREE.Vector3();
 
-export function collidesAt(position, obstacleBoxes, radius = 0.4) {
+function collidesAt(position, obstacleBoxes, radius = 0.4) {
   for (const box of obstacleBoxes) {
     if (
       position.x + radius > box.min.x &&

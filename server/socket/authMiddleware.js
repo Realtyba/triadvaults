@@ -29,7 +29,7 @@ if (!SECRET) {
   process.exit(1);
 }
 
-export function verifyToken(token) {
+function verifyToken(token) {
   // `algorithms` explícito: sin él, un token con `alg: none` se aceptaría.
   return jwt.verify(token, SECRET, {
     algorithms: ['HS256'],

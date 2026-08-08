@@ -220,9 +220,86 @@ check(
   `tras 0,25 s la cámara iba por ${atThirty.toFixed(3)} a 30 fps y por ${atOneTwenty.toFixed(3)} a 120 fps`
 );
 
+// ------------------------------------------------------------------ el encuadre
+
+/**
+ * Lo que la cámara promete en cada formato de pantalla.
+ *
+ * Es un **test dorado**: fija los números que hoy salen, no una regla nueva. Existe para
+ * que la geometría de encuadre —el trapecio del suelo, la cobertura, el ajuste de campo
+ * de visión— se pueda mover de sitio sin que nadie tenga que abrir el juego en un móvil
+ * tumbado para saber si sigue bien.
+ *
+ * Y hace falta justo aquí porque el fallo que este código ya arregló una vez no se ve en
+ * un monitor: en 16:9 todo parece correcto y es en 9:16 donde la sala se corta o el
+ * agente queda diminuto. Un decimal de más en `applyAspect` reintroduce eso en silencio.
+ */
+function framingFor(aspect, sizeX, sizeZ) {
+  const camera = new EngineCamera();
+  camera.setRoomBounds(sizeX, sizeZ);
+  camera.applyAspect(aspect);
+  return { fov: camera.camera.fov, scale: camera.aspectScale, camera };
+}
+
+// 16:9, sala del nivel 1 (20×20): el encuadre de siempre, sin corrección ninguna.
+const wide = framingFor(16 / 9, 20, 20);
+check(
+  wide.fov === 50 && Math.abs(wide.scale - 1) < EPSILON,
+  'en 16:9 el encuadre no se corrige: campo de visión 50 y sin alejar',
+  `en 16:9 salió fov ${wide.fov} y escala ${wide.scale.toFixed(4)}`
+);
+
+// 9:16, móvil de pie: aquí sí hay que corregir, y hay un techo.
+const tall = framingFor(9 / 16, 20, 20);
+check(
+  tall.fov > 50 && tall.fov <= 62,
+  `en 9:16 el campo de visión se abre a ${tall.fov.toFixed(1)}, dentro del techo de 62`,
+  `en 9:16 el campo de visión salió ${tall.fov.toFixed(1)}, fuera del rango (50, 62]`
+);
+check(
+  tall.scale >= 1 && tall.scale <= 1.5,
+  `en 9:16 la cámara se aleja ×${tall.scale.toFixed(3)}, dentro del tope de 1,5`,
+  `en 9:16 la escala salió ${tall.scale.toFixed(3)}, fuera del rango [1, 1.5]`
+);
+// Lo que de verdad importa: después de corregir, la burbuja alrededor del agente cabe.
+check(
+  tall.camera.roomCoverage(tall.camera.aspectScale) <= 1 + 1e-3,
+  'en 9:16 lo que rodea al agente cabe en pantalla tras la corrección',
+  `en 9:16 sigue faltando: hace falta ×${tall.camera.roomCoverage(tall.camera.aspectScale).toFixed(3)}`
+);
+
+// 2,2:1, móvil tumbado. Es el formato en el que se juega de verdad en el teléfono.
+const ultrawide = framingFor(2.2, 20, 20);
+check(
+  ultrawide.camera.roomCoverage(ultrawide.camera.aspectScale) <= 1 + 1e-3,
+  'en 2,2:1 lo que rodea al agente también cabe',
+  `en 2,2:1 falta cobertura: ×${ultrawide.camera.roomCoverage(ultrawide.camera.aspectScale).toFixed(3)}`
+);
+
+// `clampToRoom` confina la vista dentro de la sala más el margen, ni un ápice más.
+const bounded = new EngineCamera();
+bounded.setRoomBounds(20, 20);
+const halfX = bounded.roomHalf.x;
+const halfZ = bounded.roomHalf.z;
+const clamped = bounded.clampToRoom(new THREE.Vector3(9999, 0, -9999));
+check(
+  Math.abs(clamped.x - (halfX + 4)) < EPSILON && Math.abs(clamped.z + (halfZ + 4)) < EPSILON,
+  'un punto muy fuera de la sala se recorta al borde más el margen',
+  `el recorte dio (${clamped.x.toFixed(3)}, ${clamped.z.toFixed(3)}) y se esperaba (${(halfX + 4).toFixed(3)}, ${(-halfZ - 4).toFixed(3)})`
+);
+
+// El trapecio del suelo: contra un cuadrado unidad, salir en +X cuesta exactamente 1.
+const quadProbe = new EngineCamera();
+const unitQuad = [{ x: -1, z: -1 }, { x: 1, z: -1 }, { x: 1, z: 1 }, { x: -1, z: 1 }];
+check(
+  Math.abs(quadProbe.quadExitDistance(1, 0, unitQuad) - 1) < 1e-9,
+  'la distancia de salida del trapecio mide lo que debe en un caso conocido',
+  `salió ${quadProbe.quadExitDistance(1, 0, unitQuad).toFixed(6)} y debía ser 1`
+);
+
 console.log(
   failures === 0
-    ? '\n✅ El agente anda hacia donde se le señala y la cámara va con él.\n'
+    ? '\n✅ El agente anda hacia donde se le señala, la cámara va con él y encuadra la sala.\n'
     : `\n❌ ${failures} comprobación(es) fallida(s).\n`
 );
 process.exit(failures === 0 ? 0 : 1);

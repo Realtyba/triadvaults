@@ -9,18 +9,21 @@ import { UIManager } from '../ui/UIManager.js';
 import { ParticleField } from '../engine/Particles.js';
 import { AmbientScene } from './AmbientScene.js';
 import { LevelController } from './LevelController.js';
+import { themeForLevel } from '../procedural/LayoutGen.js';
 import { PlayerRegistry } from './PlayerRegistry.js';
 import { NetworkBridge } from './NetworkBridge.js';
 import { GHOST_DAMAGE, GHOST_STATES } from '../../shared/events.js';
+import { MOVE_SEND_HZ, GHOST_SEND_HZ } from '../../shared/constants.js';
+import { HUD_TICK_S, TENSION_TICK_S, PUZZLE_TICK_S, GHOST_TRAIL_S } from './tuning.js';
 import { falloff } from '../utils/math.js';
+// Los marcadores de borde son DOM, no escena: su color viaja como cadena CSS.
+import { hexColor } from '../ui/dom.js';
 import { quality } from '../engine/QualitySettings.js';
 import { PALETTE } from '../engine/materials.js';
 import { StatsOverlay, statsRequested } from '../engine/Stats.js';
 import { assets } from '../engine/AssetLoader.js';
-import { PLAYER_MODELS, playerModelUrl } from '../assets/manifest.js';
-
-const MOVE_SEND_HZ = 20;
-const GHOST_SEND_HZ = 15;
+import { mergedModel, disposeMergedModels } from '../engine/mergedModel.js';
+import { PLAYER_MODELS, PUZZLE_MODELS, playerModelUrl, ghostModelUrl } from '../assets/manifest.js';
 
 /**
  * Tope de fotogramas.
@@ -36,10 +39,20 @@ const GHOST_SEND_HZ = 15;
 const FRAME_BUDGET_MS = 1000 / 60;
 const FRAME_TOLERANCE_MS = 2;
 
-/** Un color de Three.js como cadena CSS. Los marcadores de borde son DOM, no escena. */
-function hexColor(value) {
-  return `#${value.toString(16).padStart(6, '0')}`;
-}
+/**
+ * Tope de fotogramas **fuera de partida**: menú, sala de espera, navegador de salas.
+ *
+ * La sala decorativa del fondo no es un adorno barato: `AmbientScene` la genera con el
+ * mismo generador que una partida, y encima de ella corre la cadena completa de
+ * postprocesado. O sea que rellenar el formulario de acceso costaba exactamente lo
+ * mismo que jugar. A treinta se sigue viendo como una escena viva —es una órbita lenta,
+ * no hay nada que responda a un botón— y en un portátil es la diferencia entre el
+ * ventilador encendido en el menú y el silencio.
+ */
+const IDLE_FRAME_BUDGET_MS = 1000 / 30;
+
+/** Techo de la espera del primer fotograma de un nivel. Ver `nextRenderedFrame`. */
+const FIRST_FRAME_WAIT_MS = 500;
 
 export class GameApp {
   constructor(container) {
@@ -56,7 +69,26 @@ export class GameApp {
     this.socket = new SocketClient();
     this.level = new LevelController(this.renderer.scene, this.lighting);
     this.players = new PlayerRegistry(this.renderer.scene);
-    this.ui = new UIManager({ socket: this.socket, sound: this.sound, game: this });
+    this.ui = new UIManager({
+      socket: this.socket,
+      sound: this.sound,
+      game: this,
+      // El aparato táctil se **inyecta**: es un periférico, no un comando. Antes la
+      // interfaz lo alcanzaba con `game.input.touch` al montar sus vistas.
+      touchInput: this.input.touch
+    });
+    /**
+     * Todo lo que este motor puede escribir y leer de la interfaz. Ver `GameState`.
+     * Fuera de estos tres puertos y de los dos avisos con nombre que quedan
+     * (`enterPlaySession` y `onLevelStarted`), `this.ui` no se toca.
+     */
+    this.state = this.ui.state;
+    /** La única vista que el bucle dibuja directo. Ver `UIManager.framePort`. */
+    this.framePort = this.ui.framePort;
+    /** Intenciones de interfaz que nacen del mando. Reusa la tabla de acciones. */
+    this.uiDispatch = (action, dataset) => this.ui.dispatch(action, dataset);
+    /** El servidor que no hay cuando se juega sin conexión. Ver `OfflineBridge`. */
+    this.offline = this.ui.offline;
     this.bridge = new NetworkBridge({ socket: this.socket, game: this, ui: this.ui });
 
     this.clock = new THREE.Clock();
@@ -64,7 +96,13 @@ export class GameApp {
     // y así `requestAnimationFrame` puede pasarnos su marca de tiempo.
     this.boundAnimate = timestamp => this.animate(timestamp);
     this.lastFrameTime = -Infinity;
-    this.running = false;
+    // Mientras dura la construcción de un nivel el bucle no dibuja. Ver `animate`.
+    this.renderSuspended = false;
+    this._running = false;
+    // Cada `startLevel` invalida al anterior: dos peticiones solapadas —cambio de
+    // nivel y regeneración, o una reconexión que llega tarde— construían las dos, y
+    // la que perdía dejaba a medias la escena de la que ganaba.
+    this.buildId = 0;
     this.deathCount = 0;
     this.lastPuzzleSolved = false;
     this.moveAccumulator = 0;
@@ -83,8 +121,8 @@ export class GameApp {
 
     this.renderer.onResizeCallback = (w, h) => this.camera.updateAspect(w, h);
     this.input.onGamepadAction = action => this.onGamepadAction(action);
-    this.input.gamepad.onConnectionChange = name => this.ui.setGamepad(name);
-    this.input.touch.onConnectionChange = () => this.ui.setTouchActive();
+    this.input.gamepad.onConnectionChange = name => this.state.setGamepad(name);
+    this.input.touch.onConnectionChange = () => this.state.setInputMode('touch');
     document.addEventListener('visibilitychange', () => this.onVisibilityChange());
     this.bridge.register();
 
@@ -93,12 +131,25 @@ export class GameApp {
       ? new StatsOverlay(this.renderer.renderer)
       : null;
 
-    if (!this.renderer.isAvailable) this.ui.alert(this.ui.ctx.t('error_no_webgl'));
+    if (!this.renderer.isAvailable) this.uiDispatch('app:alert', { key: 'error_no_webgl' });
     else {
       this.ambient.start();
       // Los modelos se traen mientras se mira el menú, que es tiempo que ya se gasta.
       // Ver `AssetLoader.preload`: hace innecesaria una pantalla de carga.
+      //
+      // Van **todos**, no sólo los agentes. Antes el atrezo, el fantasma y las piezas de
+      // puzle se descargaban y fusionaban dentro del loader del primer nivel, que es
+      // justo el rato que este bloque existe para no gastar. `PropLibrary.preload` es
+      // idempotente y `mergedModel` cachea por fichero, así que llamarlo aquí no le
+      // quita trabajo a nadie: se lo adelanta.
       assets.preload(PLAYER_MODELS.map((_, i) => playerModelUrl(i)));
+      assets.preload([ghostModelUrl()].filter(Boolean));
+      // Las piezas de puzle y el atrezo van por `mergedModel`/`PropLibrary` y no por
+      // `assets`: en ellas lo caro no es bajar el fichero sino fusionarlo, y es esa
+      // fusión —no la descarga— la que hay que tener hecha antes del primer nivel.
+      mergedModel(PUZZLE_MODELS.gate);
+      mergedModel(PUZZLE_MODELS.node);
+      this.level.props.preload();
     }
 
     // Closures reutilizados: antes se recreaban en el bucle o en la primera llamada
@@ -113,99 +164,251 @@ export class GameApp {
     return this.socket.isHost;
   }
 
+  /**
+   * ¿Hay un nivel en curso?
+   *
+   * Es una propiedad y no un campo para que publicarlo en el estado no dependa de que
+   * los cuatro sitios que lo escriben se acuerden de hacerlo. Sigue leyéndose como
+   * `gameApp.running`, que es lo que miran los escenarios e2e.
+   */
+  get running() {
+    return this._running;
+  }
+
+  set running(value) {
+    const next = !!value;
+    if (this._running === next) return;
+    this._running = next;
+    this.state?.setRunning(next);
+  }
+
   // -------------------------------------------------------------- niveles
 
   /** Arranca un nivel con la semilla que dicta el servidor. */
   startLevel({ level, seed, seedOffset = 0, playersCount }) {
     // Se muestra el loader mientras se genera: la construcción de la sala bloquea
     // el hilo principal lo suficiente como para sentirse como un freeze.
-    this.ui.showLoading('loading_level');
+    this.state.setLoading('loading_level');
+
+    // Nadie simula mientras se construye, y esto es lo que pone a los **otros dos**
+    // clientes de acuerdo: antes `running` sólo pasaba a false en el que cruzaba la
+    // salida, así que los demás seguían moviéndose y colisionando contra una sala a
+    // medio desmontar —`obstacleBoxes` vacío, arquetipo a `null`—.
+    this.running = false;
+    // El bucle deja de dibujar: el loader es opaco. Ver `animate`.
+    this.renderSuspended = true;
+
+    const buildId = ++this.buildId;
 
     // Se usa setTimeout en vez de requestAnimationFrame para darle al navegador
     // un ciclo real de repintado y que el loader aparezca en pantalla antes de
     // bloquear el event loop con las tareas de inicialización pesadas.
-    setTimeout(() => this._buildLevel({ level, seed, seedOffset, playersCount }), 50);
+    setTimeout(() => {
+      // Salir al menú en esos 50 ms cancelaba mal: se construía un nivel entero
+      // encima de la sala decorativa del menú, que comparte escena y luces.
+      if (buildId !== this.buildId) return;
+      this._buildLevel({ level, seed, seedOffset, playersCount, buildId });
+    }, 50);
   }
 
   /**
    * Construcción efectiva del nivel, una vez que el loader ya se ha pintado.
+   *
+   * El orden de esta función es el arreglo de los dos congelamientos del arranque, así
+   * que no es arbitrario:
+   *
+   *  1. Pantalla completa **antes** de nada. Cambiar de tamaño reasigna los búferes del
+   *     postprocesado, y pedirla al final —que es lo que se hacía— metía ese salto de
+   *     resolución justo en el primer fotograma que veía el jugador. Aquí el cambio
+   *     ocurre con el loader delante y da tiempo a que el freno de `watchViewport` lo
+   *     aplique durante la construcción.
+   *  2. Atmósfera antes de las mallas, para que nazcan con el reflejo del bioma. Al
+   *     revés, la sala se dibujaba con el entorno cián por defecto y todo el metal
+   *     cambiaba de golpe al llegar el PMREM.
+   *  3. Los modelos con esqueleto se esperan antes de precompilar. Eran ellos los que
+   *     entraban tarde y compilaban su shader con el loader ya quitado: literalmente
+   *     "y entonces aparece el personaje".
+   *  4. El loader no se va hasta que hay un fotograma real dibujado.
+   *
+   * Y todo dentro de un `try/finally`: sin él, cualquier excepción dejaba el overlay
+   * puesto para siempre, que desde fuera es indistinguible de un cuelgue.
+   *
    * @private
    */
-  async _buildLevel({ level, seed, seedOffset = 0, playersCount }) {
+  async _buildLevel({ level, seed, seedOffset = 0, playersCount, buildId }) {
     const room = this.socket.currentRoom;
     const count = playersCount || (room ? room.players.length : 1);
+    /** ¿Sigue siendo esta la construcción vigente? Ver `startLevel`. */
+    const current = () => buildId === undefined || buildId === this.buildId;
 
-    // La sala decorativa del menú y la de la partida no pueden convivir: comparten
-    // escena, luces y partículas.
-    this.ambient.stop();
+    try {
+      // La sala decorativa del menú y la de la partida no pueden convivir: comparten
+      // escena, luces y partículas.
+      this.ambient.stop();
 
-    // Cada agente lleva su propio cazador asignado; el orden sale de la sala, que
-    // es igual en todos los clientes, así que la asignación coincide para todos.
-    const owners = room ? room.players.map(p => ({ uid: String(p.uid) })) : [];
-    await this.level.build({ level, seed, seedOffset, playersCount: count, owners });
-    this.deathCount = 0;
-    // El daño del nivel lo lleva el servidor cuando hay sala; sin ella no hay quien
-    // lo cuente, y los logros de "sin recibir un golpe" necesitan saberlo.
-    this.levelDamage = 0;
-    this.lastPuzzleSolved = false;
-    this.lastPuzzleProgress = -1;
-    this.puzzleAccumulator = 0;
-    this.running = true;
+      await this.ui.enterPlaySession();
+      if (!current()) return;
 
-    // Atmósfera y motas del tema del nivel: cada bioma es un sitio distinto.
-    const theme = this.level.info.theme;
-    this.renderer.setAtmosphere({ bg: theme.bg, color: theme.color, fogDensity: theme.fogDensity });
-    this.particles.setupAmbient(this.level.info.sizeX, this.level.info.sizeZ, theme.color);
-    this.camera.reset();
-    // La cámara encuadra la sala de este nivel, no la mayor que el juego puede
-    // generar: sin la medida real, un nivel pequeño se veía desde demasiado lejos.
-    // Los dos ejes por separado, porque también es lo que confina la vista dentro de
-    // la sala cuando el jugador se pega a un muro. Ver `EngineCamera.clampToRoom`.
-    this.camera.setRoomBounds(this.level.info.sizeX, this.level.info.sizeZ);
-    // El zoom sobrevive entre sesiones, así que el botón tiene que arrancar con el
-    // valor guardado y no con el 100 % del estado inicial.
-    this.publishZoom(this.camera.zoomPercent);
+      // El bioma sale del número de nivel, así que se sabe sin generar nada: la
+      // atmósfera —y con ella el prefiltrado del entorno, que es lo caro— se aplica
+      // **antes** de que existan las mallas, y éstas nacen ya con su reflejo puesto.
+      const theme = themeForLevel(level);
+      this.renderer.setAtmosphere({ bg: theme.bg, color: theme.color, fogDensity: theme.fogDensity });
 
-    if (room) {
-      this.players.sync(room.players, this.socket.uid, index => this.level.spawnFor(index));
-      this.players.placeAll(index => this.level.spawnFor(index));
-    } else {
-      this.players.createSolo(this.level.spawnFor(0));
+      // Cada agente lleva su propio cazador asignado; el orden sale de la sala, que
+      // es igual en todos los clientes, así que la asignación coincide para todos.
+      const owners = room ? room.players.map(p => ({ uid: String(p.uid) })) : [];
+      const info = await this.level.build({ level, seed, seedOffset, playersCount: count, owners });
+      // `build` devuelve `null` cuando otra construcción la ha adelantado.
+      if (!info || !current()) return;
+
+      this.deathCount = 0;
+      // El daño del nivel lo lleva el servidor cuando hay sala; sin ella no hay quien
+      // lo cuente, y los logros de "sin recibir un golpe" necesitan saberlo.
+      this.levelDamage = 0;
+      this.lastPuzzleSolved = false;
+      this.lastPuzzleProgress = -1;
+      this.puzzleAccumulator = 0;
+
+      // Las motas sí necesitan la sala ya trazada: se reparten sobre su tamaño real.
+      this.particles.setupAmbient(this.level.info.sizeX, this.level.info.sizeZ, theme.color);
+      this.camera.reset();
+      // La cámara encuadra la sala de este nivel, no la mayor que el juego puede
+      // generar: sin la medida real, un nivel pequeño se veía desde demasiado lejos.
+      // Los dos ejes por separado, porque también es lo que confina la vista dentro de
+      // la sala cuando el jugador se pega a un muro. Ver `EngineCamera.clampToRoom`.
+      this.camera.setRoomBounds(this.level.info.sizeX, this.level.info.sizeZ);
+      // El zoom sobrevive entre sesiones, así que el botón tiene que arrancar con el
+      // valor guardado y no con el 100 % del estado inicial.
+      this.publishZoom(this.camera.zoomPercent);
+
+      if (room) {
+        this.players.sync(room.players, this.socket.uid, index => this.level.spawnFor(index));
+        this.players.placeAll(index => this.level.spawnFor(index));
+      } else {
+        this.players.createSolo(this.level.spawnFor(0));
+      }
+
+      // Va aquí y no junto a `camera.reset()`: hasta esta línea no hay agente local del
+      // que copiar la posición. Sin esto, la cámara entra al nivel desde la órbita del
+      // menú y el primer par de segundos son un vuelo de aproximación durante el cual ya
+      // se puede jugar. Ver `EngineCamera.snapTo`.
+      const local = this.players.local;
+      if (local) {
+        this.camera.snapTo(local.getPosition());
+        this.lighting.setShadowFocus(local.getPosition().x, local.getPosition().z);
+      }
+
+      this.sound.startBGM();
+
+      // Los modelos con esqueleto —agentes y fantasmas— se montan solos y en paralelo.
+      // Esperarlos aquí es lo que impide que entren en escena **después** del loader y
+      // compilen su shader con el jugador ya jugando. Ninguna de las dos promesas puede
+      // fallar el arranque: si el fichero no está, se resuelven sin hacer nada.
+      await Promise.all([this.players.modelsReady(), this.level.modelsReady()]);
+      if (!current()) return;
+
+      await this.renderer.precompile(this.renderer.scene, this.camera.camera);
+      if (!current()) return;
+
+      // El bucle vuelve a dibujar y se espera un fotograma **de verdad** antes de
+      // quitar el loader. Precompilar deja los programas listos, pero la primera
+      // subida de búferes y la primera pasada del postprocesado siguen costando: sin
+      // esta espera ese coste caía en el primer fotograma sin overlay delante, que es
+      // el que el jugador ve. Son ~2 fotogramas de loader de más a cambio de entrar en
+      // la sala con la imagen ya montada.
+      this.renderSuspended = false;
+      await this.nextRenderedFrame();
+      if (!current()) return;
+
+      this.running = true;
+
+      // Los datos van por el estado; el aviso sólo dice "ya hay nivel", para que la
+      // interfaz haga lo suyo —entrar en el HUD y teñirse con el color del bioma—.
+      this.state.startLevel({
+        level,
+        playersCount: count,
+        seedLabel: this.level.info.seedLabel,
+        themeName: theme.name,
+        themeColor: theme.color,
+        roomCode: this.socket.roomCode,
+        objectiveKey: this.level.puzzle.objectiveKey,
+        health: this.localHealth()
+      });
+      this.ui.onLevelStarted();
+    } catch (err) {
+      // Esto se invoca desde un `setTimeout`, así que sin el `catch` la excepción sale
+      // como un rechazo sin gestionar: no aparece en ningún sitio y lo único que se ve
+      // es que la partida "no arranca". Se registra y se deja caer.
+      console.error('[nivel] la construcción falló:', err);
+      throw err;
+    } finally {
+      // Pase lo que pase el overlay se va. Sin este `finally`, una excepción a mitad de
+      // la construcción —o una cancelación por `current()`— dejaba la pantalla de carga
+      // puesta para siempre, que desde fuera no se distingue de un cuelgue.
+      if (buildId === undefined || buildId === this.buildId) {
+        this.renderSuspended = false;
+        this.state.setLoading(null);
+      }
     }
+  }
 
-    // Va aquí y no junto a `camera.reset()`: hasta esta línea no hay agente local del
-    // que copiar la posición. Sin esto, la cámara entra al nivel desde la órbita del
-    // menú y el primer par de segundos son un vuelo de aproximación durante el cual ya
-    // se puede jugar. Ver `EngineCamera.snapTo`.
-    const local = this.players.local;
-    if (local) {
-      this.camera.snapTo(local.getPosition());
-      this.lighting.setShadowFocus(local.getPosition().x, local.getPosition().z);
-    }
-
-    this.sound.startBGM();
-
-    // Fuerza la precompilación de todos los shaders antes de quitar la pantalla de carga.
-    // WebGL es vago y compila al primer fotograma visible, lo que causaba un tirón enorme
-    // (stutter) al iniciar si se usaba material de puzle por primera vez.
-    await this.renderer.precompile(this.renderer.scene, this.camera.camera);
-
-    // Se quita el loader justo antes de publicar el estado de nivel, para que el
-    // primer fotograma pintado ya tenga la sala completa y precompilada.
-    this.ui.hideLoading();
-
-    this.ui.onLevelStarted({
-      level,
-      playersCount: count,
-      seedLabel: this.level.info.seedLabel,
-      themeName: theme.name,
-      themeColor: theme.color,
-      roomCode: this.socket.roomCode,
-      requiredPlates: this.level.puzzle.requiredPlateCount,
-      objectiveKey: this.level.puzzle.objectiveKey,
-      puzzleKind: this.level.puzzle.kind,
-      health: this.localHealth()
+  /**
+   * Se resuelve cuando el bucle ha dibujado un fotograma completo, **o cuando se agota la
+   * paciencia**.
+   *
+   * Dos `requestAnimationFrame` y no uno: el primero devuelve el control justo *antes* del
+   * repintado que el propio bucle va a hacer, así que en ese momento el fotograma todavía
+   * no está en pantalla. Es el segundo el que garantiza que ya se pintó.
+   *
+   * Y va acotado porque esto es una mejora, no un requisito: en una máquina normal los dos
+   * fotogramas son unos 30 ms y la espera ni se nota, pero sobre un rasterizador por
+   * software —una máquina de integración, una gráfica sin controlador— el primer fotograma
+   * de una escena nueva puede costar más de medio segundo cada uno, y entonces esperarlo
+   * deja de esconder un tirón y pasa a ser un retraso de más de un segundo antes de poder
+   * jugar. Si se agota, lo que ocurre es lo de antes: el tirón se ve. Ni mejor ni peor.
+   */
+  nextRenderedFrame() {
+    const deadline = performance.now() + FIRST_FRAME_WAIT_MS;
+    return new Promise(resolve => {
+      requestAnimationFrame(() => {
+        // Al llegar aquí el bucle ya ha dibujado: su `requestAnimationFrame` estaba
+        // encolado antes que éste, así que `animate` corre primero en este mismo
+        // fotograma. El segundo turno es sólo para que el compositor lo presente.
+        //
+        // El tope se comprueba **aquí dentro** y no con un `setTimeout`: cuando cada
+        // fotograma tarda cientos de milisegundos, el hilo no queda libre entre uno y otro
+        // y el temporizador no llega a ejecutarse nunca —medido: no recortaba nada—.
+        if (performance.now() >= deadline) resolve();
+        else requestAnimationFrame(resolve);
+      });
     });
+  }
+
+  /**
+   * Cierre ordenado de la aplicación.
+   *
+   * **En el navegador no lo llama nadie, y es deliberado**: cerrar la pestaña ya libera
+   * todo, y engancharlo a `pagehide` rompería la restauración desde la caché de retroceso.
+   * Sus dos consumidores reales son Electron al recargar el renderer —donde el contexto
+   * WebGL sí sobrevive al recargado— y `scripts/check-leaks.js`.
+   *
+   * Existe sobre todo porque de aquí cuelgan seis funciones de liberación que estaban
+   * escritas, exportadas y **sin un solo llamante**: `disposeTextureCache`,
+   * `disposeSharedGeometry`, `EnvironmentBuilder.dispose`, `PostFX.destroy`,
+   * `EngineLighting.destroy` y `PropLibrary.dispose`. Código muerto que aparentaba estar
+   * vivo, y que ahora el comprobador de fugas ejercita de verdad.
+   */
+  destroy() {
+    this.stop();
+    this.input.destroy();
+    this.ui.destroy();
+    this.lighting.destroy();
+    this.level.props.dispose();
+    disposeMergedModels();
+    // El último: se lleva por delante el contexto WebGL, la caché de texturas y la
+    // geometría compartida, así que todo lo que las use tiene que haber terminado.
+    this.renderer.destroy();
   }
 
   /** Reconstruye el nivel manteniendo a los jugadores (regeneración por atasco). */
@@ -220,6 +423,10 @@ export class GameApp {
 
   stop() {
     this.running = false;
+    // Invalida cualquier construcción en vuelo: volver al menú mientras se generaba un
+    // nivel dejaba que ésta terminara y montara la sala encima de la decorativa.
+    this.buildId++;
+    this.renderSuspended = false;
     this.level.clear();
     this.players.clear();
     this.particles.clearAmbient();
@@ -265,12 +472,15 @@ export class GameApp {
       this.camera.addShake(0.55);
       this.renderer.flash(0.8, 0xff0033);
     }
-    this.ui.setHealth(health);
+    this.state.setHealth(health);
 
     if (!entity.alive) {
       this.deathCount += 1;
       this.camera.addShake(1);
-      this.ui.onLocalDeath(this.deathCount);
+      // El motor publica el número de caídas y que el agente no está vivo; **no** abre
+      // el modal. Ver `GameState.setDeaths`.
+      this.state.setDeaths(this.deathCount);
+      this.state.setLocalAlive(false);
     }
   }
 
@@ -289,8 +499,8 @@ export class GameApp {
     this.particles.burst(entity.getPosition(), themeColor, { spread: 3, up: 4, count: 24 });
 
     if (String(uid) === String(this.players.localUid)) {
-      this.ui.setHealth(health);
-      this.ui.onLocalRespawn();
+      this.state.setHealth(health);
+      this.state.setLocalAlive(true);
       this.camera.reset();
       // Reaparecer es un salto, no un desplazamiento: la celda de reaparición está lejos
       // de donde caíste. Con la cámara siguiendo al agente, dejar que `follow` cubra esa
@@ -353,10 +563,22 @@ export class GameApp {
     // nadie ve. El reloj se descarta al volver, en `onVisibilityChange`.
     if (document.hidden) return;
 
-    if (now - this.lastFrameTime < FRAME_BUDGET_MS - FRAME_TOLERANCE_MS) return;
+    // `running` es lo que separa "hay un nivel" de "hay un menú con una sala de fondo".
+    // Se mira aquí y no en la interfaz a propósito: es un dato del motor, y leerlo del
+    // estado de la vista habría metido un acoplamiento nuevo en el bucle caliente.
+    const budget = this.running ? FRAME_BUDGET_MS : IDLE_FRAME_BUDGET_MS;
+    if (now - this.lastFrameTime < budget - FRAME_TOLERANCE_MS) return;
     this.lastFrameTime = now;
 
     const delta = Math.min(this.clock.getDelta(), 0.1);
+
+    // Durante la construcción de un nivel el overlay de carga es **opaco**, así que
+    // todo lo que se dibuje debajo es trabajo tirado — y no es trabajo cualquiera: es
+    // la escena entera con la cadena de postprocesado. Cada `yieldToMain` de los
+    // generadores compra un fotograma para que el navegador repinte, y ese fotograma
+    // se lo comía este render antes de que al anillo del loader le tocara el turno.
+    // El reloj sí se consume, para que al reanudar no llegue un delta de segundos.
+    if (this.renderSuspended) return;
 
     // El mando se lee siempre, no solo cuando se simula: en pausa hace falta para
     // poder reanudar, y muerto para pedir la reaparición.
@@ -384,9 +606,9 @@ export class GameApp {
    * pulsa el mismo botón del modal de caída.
    */
   onGamepadAction(action) {
-    if (action === 'pause') this.ui.togglePause();
+    if (action === 'pause') this.uiDispatch('game:pause-toggle');
     else if (action === 'respawn' && this.players.local && !this.players.local.alive) {
-      this.ui.requestRespawn();
+      this.uiDispatch('game:respawn');
     }
   }
 
@@ -408,15 +630,14 @@ export class GameApp {
     this.clock.getDelta();
     this.lastFrameTime = -Infinity;
     audio?.resume?.();
-    // El sistema suelta el centinela de pantalla al irse a segundo plano y no lo
-    // devuelve solo: sin esto, volver de una llamada deja el móvil apagándose otra vez.
-    if (this.running) this.ui.restoreWakeLock();
+    // El centinela de pantalla lo recupera la interfaz por su cuenta: también escucha
+    // `visibilitychange` y sabe si hay nivel en curso por `state.running`.
   }
 
   /** Sin conexión no se simula: antes el juego seguía corriendo contra el vacío. */
   canSimulate() {
     if (!this.running || !this.level.info) return false;
-    if (this.ui.isPaused || this.ui.isReconnecting) return false;
+    if (this.state.isPaused || this.state.isLinkFrozen) return false;
     return this.socket.currentRoom ? this.socket.isConnected : true;
   }
 
@@ -433,7 +654,7 @@ export class GameApp {
   publishZoom(percent) {
     if (this.lastZoomPercent === percent) return;
     this.lastZoomPercent = percent;
-    this.ui.store.patch({ zoom: percent });
+    this.state.setZoom(percent);
   }
 
   /** Botón de zoom del HUD: salta al siguiente escalón. */
@@ -495,7 +716,7 @@ export class GameApp {
     if (this.edgeAccumulator < period) return;
     this.edgeAccumulator = 0;
 
-    this.ui.edgeMarkers.update(this.camera.camera, this.collectOffscreenTargets(local));
+    this.framePort.edgeMarkers.update(this.camera.camera, this.collectOffscreenTargets(local));
   }
 
   /**
@@ -539,10 +760,10 @@ export class GameApp {
   /** Timer, modo de entrada y estado de los compañeros van a ~2 Hz: no hace falta más. */
   throttledHudUpdate(delta) {
     this.hudAccumulator += delta;
-    if (this.hudAccumulator < 0.5) return;
+    if (this.hudAccumulator < HUD_TICK_S) return;
     this.hudAccumulator = 0;
 
-    this.ui.store.patch({
+    this.state.setHudTick({
       elapsedTime: this.level.elapsedSeconds,
       inputMode: this.input.mode,
       teammates: this.collectTeammates()
@@ -595,7 +816,7 @@ export class GameApp {
     this.updateProximityShake(delta, local);
 
     this.tensionAccumulator = (this.tensionAccumulator || 0) + delta;
-    if (this.tensionAccumulator < 0.2) return;
+    if (this.tensionAccumulator < TENSION_TICK_S) return;
     this.tensionAccumulator = 0;
 
     if (!local || !local.alive) {
@@ -714,7 +935,7 @@ export class GameApp {
     if (!quality.get('ghostTrail')) return;
 
     ghost.trailAccumulator = (ghost.trailAccumulator || 0) + delta;
-    if (ghost.trailAccumulator < 0.15) return;
+    if (ghost.trailAccumulator < GHOST_TRAIL_S) return;
     ghost.trailAccumulator = 0;
 
     this.particles.burst(ghost.mesh.position, 0x330011, { spread: 0.6, up: 0.4, count: 2 });
@@ -761,10 +982,10 @@ export class GameApp {
     // segundo y antes se hacía un `store.patch` en cada fotograma incluso cuando
     // el valor no había cambiado, que es la mayor fuente de repintados inútiles.
     this.puzzleAccumulator += delta;
-    if (this.puzzleAccumulator >= 0.125 || result.solved !== this.lastPuzzleSolved || result.progressPercent !== this.lastPuzzleProgress) {
+    if (this.puzzleAccumulator >= PUZZLE_TICK_S || result.solved !== this.lastPuzzleSolved || result.progressPercent !== this.lastPuzzleProgress) {
       this.puzzleAccumulator = 0;
       this.lastPuzzleProgress = result.progressPercent;
-      this.ui.setObjectiveProgress(result.progressPercent, result.solved);
+      this.state.setObjectiveProgress(result.progressPercent, result.solved);
     }
 
     if (result.solved && local && local.alive && this.level.isAtExit(local.getPosition())) {
@@ -777,7 +998,7 @@ export class GameApp {
         return;
       }
 
-      this.ui.onOfflineLevelComplete({
+      this.offline.levelComplete({
         level: this.level.level,
         timeSpent: this.level.elapsedSeconds,
         damageTaken: this.levelDamage,

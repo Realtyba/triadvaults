@@ -46,9 +46,5 @@ export function selectPuzzleType({ level = 1, seed = 1, seedOffset = 0, playersC
   return rng.pick(candidates);
 }
 
-/** Recupera un arquetipo por su clave; útil para pruebas y validación. */
-export function puzzleTypeByKey(key) {
-  return BY_KEY.get(key) || null;
-}
 
 export { PressurePlates, SequenceLock, TimedGates, RelayCircuit };

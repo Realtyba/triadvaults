@@ -1,41 +1,14 @@
 import * as THREE from 'three';
 
 /**
- * Paleta y fábricas de materiales.
+ * Fábricas de materiales.
  *
- * Los mismos seis hex estaban repetidos por ocho ficheros, y eso escondía un
- * detalle que costaba encontrar: hay **dos naranjas casi idénticos y sin relación
- * entre sí**. `PLATE_IDLE` (0xffa500) es el estado en reposo de una placa; `AMBER`
- * (0xffaa00) es el color de un bioma. Se parecen lo bastante como para que
- * cualquiera "corrigiese" uno por el otro pensando que era una errata.
+ * La paleta se mudó a `palette.js` —que no importa Three— para que `LayoutGen` pueda
+ * consumirla desde Node. Se reexporta aquí porque es de donde la importan los otros ocho
+ * ficheros y no hay razón para hacerles cambiar el import.
  */
-export const PALETTE = {
-  // Colores de bioma. Deben coincidir con LEVEL_THEMES de LayoutGen.js.
-  CYAN: 0x00f3ff,
-  MAGENTA: 0xff0077,
-  EMERALD: 0x00ff66,
-  AMBER: 0xffaa00,
-  PURPLE: 0x9d00ff,
-
-  // Agentes, en orden de índice.
-  PLAYER: [0x00f3ff, 0xff0077, 0x00ff66],
-
-  // Estados de puzle.
-  PLATE_IDLE: 0xffa500, // ojo: NO es AMBER, ver comentario de arriba
-  PLATE_ACTIVE: 0x00ff66,
-  DOOR_LOCKED: 0xff0055,
-  DOOR_OPEN: 0x00ff66,
-
-  // Amenaza.
-  DANGER: 0xff0033,
-  GHOST_AURA: 0xff0044,
-
-  // Superficies oscuras.
-  BODY_DARK: 0x111525,
-  STRUCTURE_DARK: 0x151828,
-  POLE_DARK: 0x1a1e30,
-  PLATE_BASE: 0x222638
-};
+import { PALETTE } from './palette.js';
+export { PALETTE };
 
 /**
  * Material emisivo de neón.

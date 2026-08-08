@@ -93,6 +93,10 @@ export class AmbientScene {
     this.scene.remove(this.dungeon.group);
     this.dungeon = null;
     this.particles.clearAmbient();
+    // Las luces de esquina las monta `start`, así que también las quita `stop`. Faltaban:
+    // sobrevivían hasta que el nivel siguiente llamaba a `setupCornerLights`, y entre
+    // medias el nivel se iluminaba con las luces —y el color— de la sala del menú.
+    this.lighting.clearCornerLights();
     this.active = false;
   }
 }

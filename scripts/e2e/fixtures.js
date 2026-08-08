@@ -32,6 +32,25 @@ async function post(path, body) {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body)
   });
+
+  /**
+   * El límite de intentos se distingue **aquí**, y no es cosmético.
+   *
+   * `/login` está limitado a 10 intentos por IP cada 15 minutos
+   * (`RouteServiceProvider::triadvaults-auth` en realtyba-api). Correr la suite dos veces
+   * seguidas lo agota, y entonces `ensureAgent` veía fallar el acceso, pasaba a registrar
+   * y lo que salía por pantalla era *"El nombre de usuario ya está ocupado por otro
+   * agente"*: un mensaje que parece un fallo del juego y que ha costado más de una
+   * investigación en falso. Si sale este error, no hay nada roto: hay que esperar.
+   */
+  if (res.status === 429) {
+    throw new Error(
+      `La API limitó los intentos de acceso (429 en ${path}). Son 10 cada 15 minutos por IP, ` +
+        'así que la suite no se puede correr dos veces seguidas. Espera y vuelve a intentarlo; ' +
+        'no busques el fallo en el código.'
+    );
+  }
+
   return res.json();
 }
 

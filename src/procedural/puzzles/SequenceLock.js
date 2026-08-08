@@ -54,7 +54,7 @@ export class SequenceLock extends PuzzleArchetype {
   }
 
   evaluate(players) {
-    const newlyPressed = [];
+    const newlyPressed = this.beginEvaluation();
     const pressed = this.nodes.find(node => this.isNodePressed(node, players));
 
     if (pressed) {
@@ -80,12 +80,7 @@ export class SequenceLock extends PuzzleArchetype {
     }
 
     const total = this.requiredPlateCount;
-    return {
-      solved: this.step >= total,
-      progressPercent: Math.round((this.step / total) * 100),
-      activeCount: this.step,
-      newlyPressed
-    };
+    return this.report(this.step, total, this.step >= total);
   }
 
   /** Vuelta al principio: se apagan todas y se avisa con el color. */

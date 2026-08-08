@@ -69,7 +69,10 @@ export const MODALS = {
     body: `
       <p>${t('game_over_desc')}</p>
       <button class="btn btn-danger" data-action="game:respawn">${t('btn_respawn')}</button>
-      ${state.canRegenerate
+      ${/* Tras varias caídas seguidas se ofrece regenerar, por si el nivel quedó
+           injugable. El umbral vive aquí y no en el motor: es una decisión de qué
+           ofrecerle al jugador, no una regla de simulación. */''}
+      ${state.deathCount >= 3
         ? `<button class="btn btn-outline" data-action="game:regenerate">${t('btn_regenerate_map')}</button>`
         : ''}
     `

@@ -1,4 +1,5 @@
 import { EVENTS } from '../../shared/events.js';
+import { NEXT_LEVEL_DELAY_MS } from './tuning.js';
 
 /**
  * Único punto donde se suscriben los eventos de socket.
@@ -6,9 +7,6 @@ import { EVENTS } from '../../shared/events.js';
  * Antes se registraban dentro de `showLobby()`, que se llamaba en cada entrada a
  * sala: los handlers se acumulaban y un mismo evento se procesaba N veces.
  */
-/** Pausa entre la pantalla de victoria y el nivel siguiente. */
-const NEXT_LEVEL_DELAY_MS = 2000;
-
 /** Forma canónica del arranque de nivel; se construía a mano en ocho sitios. */
 function levelPayload({ level, seed, seedOffset, players, playersCount }) {
   return {

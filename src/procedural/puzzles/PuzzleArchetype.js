@@ -88,6 +88,38 @@ export class PuzzleArchetype {
      * cambia mientras cargan, lo que llegue tarde iría a parar a la sala siguiente.
      */
     this.cleared = false;
+
+    /**
+     * El parte del puzle, reutilizado en cada fotograma.
+     *
+     * Los cuatro arquetipos devolvían un objeto literal —y un array de recién pisados—
+     * **sesenta veces por segundo** cada uno, con la misma forma escrita cuatro veces.
+     * Se consume dentro del mismo fotograma en que se emite y nadie lo guarda, así que
+     * un único objeto por puzle basta. Ver `report`.
+     *
+     * La regla que esto impone: quien lo reciba puede leerlo, pero no quedárselo.
+     */
+    this.result = { solved: false, progressPercent: 0, activeCount: 0, newlyPressed: [] };
+  }
+
+  /**
+   * Abre un fotograma de evaluación y devuelve el array de recién pisados, ya vacío.
+   * Cada arquetipo lo llena; nadie lo crea.
+   */
+  beginEvaluation() {
+    this.result.newlyPressed.length = 0;
+    return this.result.newlyPressed;
+  }
+
+  /**
+   * Cierra el fotograma de evaluación. Los cuatro arquetipos calculan el porcentaje
+   * igual, así que la fórmula vive aquí y no repetida en cada uno.
+   */
+  report(activeCount, total, solved) {
+    this.result.solved = solved;
+    this.result.progressPercent = total > 0 ? Math.round((activeCount / total) * 100) : 0;
+    this.result.activeCount = activeCount;
+    return this.result;
   }
 
   /** Clave i18n del objetivo. La sobrescribe cada arquetipo. */
@@ -108,15 +140,20 @@ export class PuzzleArchetype {
     this.playersCount = clampPlayers(playersCount);
     this.theme = info.theme;
 
-    const p1 = this.buildExits(info.exitPositions || [info.exitPos]);
+    const exits = this.buildExits(info.exitPositions || [info.exitPos]);
     this.build(info);
-    
-    // Ahora las promesas SÍ se esperan: así evitamos que los modelos `.glb`
-    // entren en la escena tarde y fuercen una compilación GLSL en pleno juego.
-    const p2 = this.buildNodeBases();
-    this.buildNodeCores();
-    
-    await Promise.all([p1, p2]);
+
+    // Las tres piezas que traen modelo se esperan de verdad, que es lo que evita que un
+    // `.glb` entre en escena tarde y fuerce una compilación GLSL en pleno juego.
+    //
+    // Antes aquí sólo se esperaban las salidas y `buildNodeBases`, que es **síncrona**:
+    // meterla en un `Promise.all` no espera nada. La que sí tarda —`buildNodeCores`, que
+    // baja y fusiona el núcleo del nodo— se lanzaba y se soltaba, así que los núcleos
+    // aparecían con el nivel ya empezado. Justo lo que el comentario decía impedir.
+    const bases = this.buildNodeBases();
+    const cores = this.buildNodeCores();
+
+    await Promise.all([exits, bases, cores]);
     return { requiredCount: this.requiredPlateCount, exitPos: info.exitPos };
   }
 
@@ -150,9 +187,14 @@ export class PuzzleArchetype {
    * escribirlo una vez. Antes eran tres mallas por salida —marco, campo y baliza—, o sea
    * nueve envíos con tres salidas abiertas.
    *
-   * Es asíncrono y nadie lo espera, y no pasa nada: las compuertas están ocultas hasta que
-   * el puzle cede, que tarda bastante más de lo que tarda en llegar un `.glb` de 28 kB. Si
-   * cediera antes, `showExits` ya habrá puesto `this.solved` y se montan visibles.
+   * **Se espera**, y ahora importa que se espere: `generate` no termina hasta que estos
+   * tres `InstancedMesh` están en la escena, y de eso depende que `Renderer.precompile`
+   * los encuentre. Sus marcos proyectan sombra, así que si llegaran después del loader su
+   * programa de profundidad se compilaría en el fotograma en que se abren las compuertas
+   * —que era exactamente el tirón del final de nivel—. Ver `Renderer.warmUpShadows`.
+   *
+   * Aun así el montaje tolera llegar tarde: si el puzle cediera mientras baja el `.glb`,
+   * `openExit` ya habrá puesto `this.solved` y las mallas se montan visibles.
    *
    * @param {Array<{x: number, z: number}>} positions
    */
@@ -338,7 +380,8 @@ export class PuzzleArchetype {
     this.updateNodeCores();
 
     if (this.solved) {
-      return { solved: true, progressPercent: 100, activeCount: this.requiredPlateCount, newlyPressed: [] };
+      this.beginEvaluation();
+      return this.report(this.requiredPlateCount, this.requiredPlateCount, true);
     }
 
     const result = this.evaluate(players, delta);

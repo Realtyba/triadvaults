@@ -14,7 +14,7 @@ const STORAGE_KEY = 'triad_bindings';
 /** Acciones remapeables. La pausa no está: la gobierna Escape en `UIManager`. */
 export const ACTIONS = ['up', 'down', 'left', 'right', 'interact'];
 
-export const DEFAULT_BINDINGS = {
+const DEFAULT_BINDINGS = {
   up: ['KeyW', 'ArrowUp'],
   down: ['KeyS', 'ArrowDown'],
   left: ['KeyA', 'ArrowLeft'],

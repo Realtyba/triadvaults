@@ -43,8 +43,34 @@ export function show(node, visible) {
   toggleClass(node, 'hidden', !visible);
 }
 
-/** Formatea segundos como `12m 30s`. */
+/**
+ * Los dos formatos de tiempo del juego. **No se unifican, y es deliberado.**
+ *
+ * `formatDuration` es para listas y perfiles, donde el número se lee de un vistazo entre
+ * texto y "12m 30s" se entiende sin contexto. `formatClock` es para el cronómetro del
+ * HUD, donde importa que la anchura no cambie al pasar de 9 a 10 segundos: relleno con
+ * ceros y ancho fijo. Son dos requisitos distintos, no una duplicación.
+ */
 export function formatDuration(seconds = 0) {
   const total = Math.max(0, Math.floor(seconds));
   return `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+/** Segundos como `MM:SS`, de anchura constante. Ver `formatDuration`. */
+export function formatClock(seconds = 0) {
+  const total = Math.max(0, Math.floor(seconds));
+  const m = String(Math.floor(total / 60)).padStart(2, '0');
+  const s = String(total % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+/**
+ * Un color de Three.js (`0x00f3ff`) como cadena CSS (`#00f3ff`).
+ *
+ * Estaba escrita tres veces: en `GameApp`, en `UIManager` y dentro de `PlayerCard`. Vive
+ * aquí y no en `engine/` porque el destino siempre es CSS: la escena usa los números tal
+ * cual, y el único motivo de convertirlos es que algo se pinte con DOM.
+ */
+export function hexColor(value) {
+  return `#${Number(value).toString(16).padStart(6, '0')}`;
 }

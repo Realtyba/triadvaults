@@ -13,7 +13,7 @@ import { isCoarsePointer, isHandheld, isMobileGpu } from './device.js';
 
 const STORAGE_KEY = 'triad_quality';
 
-export const QUALITY_LEVELS = ['bajo', 'movil', 'medio', 'alto', 'ultra'];
+const QUALITY_LEVELS = ['bajo', 'movil', 'medio', 'alto', 'ultra'];
 
 /**
  * Nota sobre el coste real.

@@ -83,13 +83,29 @@ export class EngineInput {
      */
     this.zoomDelta = 0;
 
-    window.addEventListener('keydown', e => this.onKey(e, true));
-    window.addEventListener('keyup', e => this.onKey(e, false));
-    window.addEventListener('wheel', e => this.onWheel(e), { passive: true });
+    // Los escuchadores se guardan en vez de registrarse con una función anónima: sin
+    // la referencia no hay forma de quitarlos, y esta clase vive hasta que se cierra la
+    // pestaña. Ver `destroy`, que es lo que permite recargar el renderer de Electron sin
+    // dejar la entrada duplicada.
+    this.listeners = [
+      ['keydown', e => this.onKey(e, true)],
+      ['keyup', e => this.onKey(e, false)],
+      ['wheel', e => this.onWheel(e), { passive: true }],
+      // Al perder el foco (alt-tab) no llega el `keyup`, y el agente se quedaba
+      // andando solo contra una pared hasta que se volvía a pulsar la tecla.
+      ['blur', () => this.releaseAll()]
+    ];
+    this.listeners.forEach(([type, handler, options]) => window.addEventListener(type, handler, options));
+  }
 
-    // Al perder el foco (alt-tab) no llega el `keyup`, y el agente se quedaba
-    // andando solo contra una pared hasta que se volvía a pulsar la tecla.
-    window.addEventListener('blur', () => this.releaseAll());
+  /** Suelta teclado y rueda, y con ellos el mando y el dedo. */
+  destroy() {
+    this.listeners.forEach(([type, handler]) => window.removeEventListener(type, handler));
+    this.listeners = [];
+    this.gamepad.destroy();
+    // `TouchInput` ya sabía soltarse; se llama `release` porque también se usa al ocultar
+    // la capa táctil, no sólo al cerrar.
+    this.touch.release();
   }
 
   onKey(event, pressed) {

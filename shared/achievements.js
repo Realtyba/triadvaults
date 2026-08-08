@@ -64,7 +64,7 @@ export const METRICS = {
   flawless: 'superado sin recibir daño (1 o 0)'
 };
 
-export const COMPARATORS = {
+const COMPARATORS = {
   '>=': (a, b) => a >= b,
   '<=': (a, b) => a <= b,
   '>': (a, b) => a > b,
@@ -73,10 +73,10 @@ export const COMPARATORS = {
 };
 
 /** Iconos que la interfaz sabe dibujar para un logro. Ver `src/ui/icons.js`. */
-export const ACHIEVEMENT_ICONS = ['bolt', 'trophy', 'shield', 'user', 'hint', 'doc'];
+const ACHIEVEMENT_ICONS = ['bolt', 'trophy', 'shield', 'user', 'hint', 'doc'];
 
 /** Icono de reserva: una fila con un icono desconocido se pinta, no desaparece. */
-export const FALLBACK_ICON = 'trophy';
+const FALLBACK_ICON = 'trophy';
 
 const MAX_KEY_LENGTH = 50;
 const KEY_PATTERN = /^[a-z0-9_]+$/;
@@ -276,7 +276,7 @@ function readMetric(context, metric) {
  * @param {AchievementDefinition} definition
  * @param {AchievementContext} context
  */
-export function matchesConditions(definition, context) {
+function matchesConditions(definition, context) {
   const conditions = definition?.conditions;
   // Sin condiciones se devolvería `true` por vacuidad y el logro se regalaría a
   // todo el mundo en el primer nivel. Una fila rota no puede conceder nada.

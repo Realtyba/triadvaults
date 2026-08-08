@@ -240,16 +240,30 @@ export class NavGrid {
       const row = queue[head + 1];
       const distance = field[this.index(col, row)] + 1;
 
-      for (const [c, r] of [[col + 1, row], [col - 1, row], [col, row + 1], [col, row - 1]]) {
-        if (!this.inBounds(c, r) || this.isBlocked(c, r)) continue;
-        const idx = this.index(c, r);
-        if (field[idx] !== UNREACHABLE) continue;
-        field[idx] = distance;
-        queue.push(c, r);
-      }
+      // Los cuatro vecinos, desenrollados.
+      //
+      // El bucle sobre un literal `[[col+1,row], ...]` construía cinco arrays **por celda
+      // visitada**: unos mil seiscientos por recálculo, y esto se recalcula varias veces
+      // por segundo por cada presa que cambia de celda. Era, con diferencia, la mayor
+      // fuente de basura del juego. Lo demás del método ya estaba escrito para no asignar
+      // —búfer reutilizado, cola plana con índice de lectura—, así que el literal era la
+      // única pieza que desentonaba.
+      this.visitNeighbour(field, queue, col + 1, row, distance);
+      this.visitNeighbour(field, queue, col - 1, row, distance);
+      this.visitNeighbour(field, queue, col, row + 1, distance);
+      this.visitNeighbour(field, queue, col, row - 1, distance);
     }
 
     return field;
+  }
+
+  /** Un vecino del recorrido por anchura. Aparte para que el desenrollado se lea. @private */
+  visitNeighbour(field, queue, col, row, distance) {
+    if (!this.inBounds(col, row) || this.isBlocked(col, row)) return;
+    const idx = this.index(col, row);
+    if (field[idx] !== UNREACHABLE) return;
+    field[idx] = distance;
+    queue.push(col, row);
   }
 
   /**

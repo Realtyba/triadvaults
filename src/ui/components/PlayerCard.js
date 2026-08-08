@@ -1,9 +1,9 @@
-import { esc } from '../dom.js';
+import { esc, hexColor } from '../dom.js';
 import { PLAYER_COLORS } from '../../entities/Player.js';
 
 /** Tarjeta de agente del lobby, con el color que usará en partida. */
 export function renderPlayerCard(player, t) {
-  const color = `#${PLAYER_COLORS[player.index % PLAYER_COLORS.length].toString(16).padStart(6, '0')}`;
+  const color = hexColor(PLAYER_COLORS[player.index % PLAYER_COLORS.length]);
   const offline = player.connected === false;
 
   return `

@@ -40,7 +40,7 @@ export class TimedGates extends PuzzleArchetype {
   }
 
   evaluate(players) {
-    const newlyPressed = [];
+    const newlyPressed = this.beginEvaluation();
     const now = this.elapsed;
 
     for (const node of this.nodes) {
@@ -62,13 +62,7 @@ export class TimedGates extends PuzzleArchetype {
 
     const active = this.expiries.size;
     const total = this.requiredPlateCount;
-
-    return {
-      solved: active >= total,
-      progressPercent: Math.round((active / total) * 100),
-      activeCount: active,
-      newlyPressed
-    };
+    return this.report(active, total, active >= total);
   }
 
   /**

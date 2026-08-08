@@ -114,9 +114,16 @@ export class EnvironmentBuilder {
       const target = source === 'room'
         ? this.buildRoom(colorHex, bgHex)
         : this.buildCanvas(colorHex, bgHex);
+      // Se guarda el objetivo de render **entero**, no sólo su textura.
+      //
+      // `fromScene` y `fromEquirectangular` devuelven un `WebGLRenderTarget`, y aquí se
+      // conservaba únicamente su `.texture`. `texture.dispose()` no libera el
+      // framebuffer ni el búfer de profundidad del objetivo, así que cada bioma nuevo
+      // —y cada cambio de preset— dejaba uno colgado sin forma de alcanzarlo. Con el
+      // objetivo guardado, `dispose()` puede soltarlo todo.
       this.cache.set(key, target);
     }
-    return this.cache.get(key);
+    return this.cache.get(key).texture;
   }
 
   /** Prefiltra el lienzo pintado. Ver `paint`. */
@@ -125,7 +132,7 @@ export class EnvironmentBuilder {
     const target = this.pmrem.fromEquirectangular(source);
     // El lienzo ya está convolucionado en el mapa: conservarlo sería duplicar.
     source.dispose();
-    return target.texture;
+    return target;
   }
 
   /**
@@ -164,7 +171,7 @@ export class EnvironmentBuilder {
 
     const target = this.pmrem.fromScene(scene, 0.04);
     scene.dispose();
-    return target.texture;
+    return target;
   }
 
   /**
@@ -243,7 +250,10 @@ export class EnvironmentBuilder {
   }
 
   dispose() {
-    this.cache.forEach(texture => texture.dispose());
+    // `WebGLRenderTarget.dispose()` suelta el framebuffer, el búfer de profundidad y la
+    // textura. Llamar sólo a `texture.dispose()`, que es lo que se hacía, dejaba los dos
+    // primeros vivos por cada bioma visitado.
+    this.cache.forEach(target => target.dispose());
     this.cache.clear();
     this.pmrem.dispose();
   }

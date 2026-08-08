@@ -1,4 +1,4 @@
-import { MAX_PLAYERS, ROOM_STATUS } from '../../shared/constants.js';
+import { MAX_PLAYERS, ROOM_STATUS, MAX_HEALTH } from '../../shared/constants.js';
 
 /**
  * Forma canónica del estado de sala y de jugador.
@@ -10,9 +10,10 @@ import { MAX_PLAYERS, ROOM_STATUS } from '../../shared/constants.js';
 // Se reexportan para no romper a quien ya las importaba de aquí, pero la
 // definición vive en `shared/` porque el cliente necesita las mismas: el lobby
 // pinta MAX_PLAYERS huecos y el navegador valida la longitud del código.
-export { MAX_PLAYERS, ROOM_STATUS };
+// `MAX_HEALTH` se une a la lista por el mismo motivo: el cliente la necesita para la
+// reaparición en solitario, donde no hay servidor que la dicte.
+export { MAX_PLAYERS, ROOM_STATUS, MAX_HEALTH };
 
-export const MAX_HEALTH = 100;
 export const DISCONNECT_GRACE_MS = 15000;
 
 /**
@@ -119,7 +120,7 @@ export function createRoomState({ code, host }) {
   };
 }
 
-export function roomStatus(room) {
+function roomStatus(room) {
   if (room.inGame) return ROOM_STATUS.IN_GAME;
   if (room.players.length >= MAX_PLAYERS) return ROOM_STATUS.FULL;
   return ROOM_STATUS.LOBBY;

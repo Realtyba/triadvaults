@@ -38,7 +38,7 @@ export class AmbientScene {
   }
 
   /** Levanta la sala decorativa. Idempotente. */
-  start() {
+  async start() {
     if (this.active) return;
 
     // Un tema al azar en cada arranque: el menú no siempre tiene el mismo color y
@@ -47,8 +47,13 @@ export class AmbientScene {
     const theme = LEVEL_THEMES[themeIndex];
 
     this.dungeon = new DungeonGenerator(this.scene);
+    this.active = true;
+
     // Nivel alto = sala grande y con más muros; da una silueta más interesante.
-    const info = this.dungeon.generateLevel(themeIndex + 1, 4242, 0, 3);
+    const info = await this.dungeon.generateLevel(themeIndex + 1, 4242, 0, 3);
+    
+    // Si el usuario inició partida rápido, stop() ya lo canceló
+    if (!this.active) return;
 
     this.renderer.setAtmosphere({
       bg: theme.bg,
@@ -58,7 +63,6 @@ export class AmbientScene {
     this.lighting.setupCornerLights(info.sizeX, info.sizeZ, theme.color);
     this.particles.setupAmbient(info.sizeX, info.sizeZ, theme.color);
 
-    this.active = true;
     this.angle = Math.random() * Math.PI * 2;
   }
 

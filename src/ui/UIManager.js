@@ -142,16 +142,16 @@ export class UIManager {
     const t = this.ctx.t;
     const { audioMuted, lang } = this.store.get();
     this.nodes.topBar.innerHTML = `
-      <button class="icon-btn" data-action="app:audio" title="${t('btn_audio')}" aria-label="${t('btn_audio')}">
+      <button type="button" class="icon-btn" data-action="app:audio" title="${t('btn_audio')}" aria-label="${t('btn_audio')}">
         ${icon(audioMuted ? 'audioOff' : 'audioOn', { size: 18 })}
       </button>
-      <button class="icon-btn" data-action="modal:open" data-modal="settings"
+      <button type="button" class="icon-btn" data-action="modal:open" data-modal="settings"
               title="${t('settings_title')}" aria-label="${t('settings_title')}">
         ${icon('settings', { size: 18 })}
       </button>
       <div class="lang-picker">
-        <button class="lang-btn ${lang === 'es' ? 'is-active' : ''}" data-action="app:lang" data-lang="es">ES</button>
-        <button class="lang-btn ${lang === 'en' ? 'is-active' : ''}" data-action="app:lang" data-lang="en">EN</button>
+        <button type="button" class="lang-btn ${lang === 'es' ? 'is-active' : ''}" data-action="app:lang" data-lang="es">ES</button>
+        <button type="button" class="lang-btn ${lang === 'en' ? 'is-active' : ''}" data-action="app:lang" data-lang="en">EN</button>
       </div>
     `;
   }

@@ -121,9 +121,10 @@ export class GameApp {
     // el hilo principal lo suficiente como para sentirse como un freeze.
     this.ui.showLoading('loading_level');
 
-    // Se difiere al siguiente fotograma para que el navegador pinte el loader
-    // antes de que la generación se lleve todo el presupuesto del frame.
-    requestAnimationFrame(() => this._buildLevel({ level, seed, seedOffset, playersCount }));
+    // Se usa setTimeout en vez de requestAnimationFrame para darle al navegador
+    // un ciclo real de repintado y que el loader aparezca en pantalla antes de
+    // bloquear el event loop con las tareas de inicialización pesadas.
+    setTimeout(() => this._buildLevel({ level, seed, seedOffset, playersCount }), 50);
   }
 
   /**
@@ -187,7 +188,7 @@ export class GameApp {
     // Fuerza la precompilación de todos los shaders antes de quitar la pantalla de carga.
     // WebGL es vago y compila al primer fotograma visible, lo que causaba un tirón enorme
     // (stutter) al iniciar si se usaba material de puzle por primera vez.
-    this.renderer.precompile(this.renderer.scene, this.camera.camera);
+    await this.renderer.precompile(this.renderer.scene, this.camera.camera);
 
     // Se quita el loader justo antes de publicar el estado de nivel, para que el
     // primer fotograma pintado ya tenga la sala completa y precompilada.

@@ -1821,6 +1821,10 @@ label {
   position: relative;
   width: 72px;
   height: 72px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 14px color-mix(in srgb, var(--accent, var(--neon-cyan)) 40%, transparent),
+    inset 0 0 14px color-mix(in srgb, var(--accent, var(--neon-cyan)) 15%, transparent);
 }
 
 .loading-overlay__ring {
@@ -1831,9 +1835,6 @@ label {
   border-top-color: var(--accent, var(--neon-cyan));
   border-right-color: var(--accent, var(--neon-cyan));
   animation: loading-spin 1s linear infinite;
-  box-shadow:
-    0 0 14px color-mix(in srgb, var(--accent, var(--neon-cyan)) 40%, transparent),
-    inset 0 0 14px color-mix(in srgb, var(--accent, var(--neon-cyan)) 15%, transparent);
 }
 
 .loading-overlay__ring--inner {

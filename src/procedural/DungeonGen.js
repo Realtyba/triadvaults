@@ -36,9 +36,11 @@ export class DungeonGenerator {
     this.scene.add(this.group);
     this.obstacleBoxes = [];
     this.layout = null;
+    this.generationId = 0;
   }
 
   clear() {
+    this.generationId++;
     disposeChildren(this.group);
     this.obstacleBoxes = [];
   }
@@ -51,11 +53,15 @@ export class DungeonGenerator {
    */
   async generateLevel(levelNum = 1, baseSeed = 1, seedOffset = 0, plateCount = 1) {
     this.clear();
+    const currentGen = this.generationId;
 
     const layout = await generateLayout(levelNum, baseSeed, seedOffset, plateCount);
+    if (this.generationId !== currentGen) return null;
+
     this.layout = layout;
     
     await yieldToMain();
+    if (this.generationId !== currentGen) return null;
 
     const { theme, sizeX, sizeZ } = layout;
     this.buildFloor(sizeX, sizeZ, theme);
@@ -81,6 +87,8 @@ export class DungeonGenerator {
     // son, y un `InstancedMesh` necesita el total al construirse.
     const specs = [...this.boundarySpecs(sizeX, sizeZ), ...layout.walls];
     await yieldToMain();
+    if (this.generationId !== currentGen) return null;
+
     this.buildWalls(specs, wallMat, trimMat);
 
     return {

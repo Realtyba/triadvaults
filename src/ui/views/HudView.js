@@ -59,11 +59,11 @@ export class HudView {
         <!-- El zoom vive en la barra y no en un menú: es un ajuste que se toca en
              mitad de la acción —para ver venir al fantasma o para leer una placa
              lejana—, no una vez al empezar. -->
-        <button class="btn btn-sm btn-secondary hud-zoom" data-action="view:zoom"
+        <button type="button" class="btn btn-sm btn-secondary hud-zoom" data-action="view:zoom"
                 title="${this.t('btn_zoom')}" aria-label="${this.t('btn_zoom')}">
           ${icon('zoom', { size: 14 })}<span data-ref="zoom">100%</span>
         </button>
-        <button class="btn btn-sm btn-secondary" data-action="game:pause">${this.t('btn_pause')}</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="game:pause">${this.t('btn_pause')}</button>
       </div>
 
       <div class="hud-health glass-panel" data-ref="healthPanel">

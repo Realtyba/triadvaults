@@ -63,15 +63,15 @@ export class TouchControlsView {
         <!-- El pellizco sobre la sala hace lo mismo, pero nada en pantalla lo anuncia:
              este botón es lo que hace descubrible el zoom, y de paso da pasos exactos
              a quien juega con una sola mano. -->
-        <button class="touch-btn touch-btn--zoom" data-action="view:zoom"
+        <button type="button" class="touch-btn touch-btn--zoom" data-action="view:zoom"
                 title="${this.t('btn_zoom')}" aria-label="${this.t('btn_zoom')}">
           ${icon('zoom', { size: 20 })}<span data-ref="zoom">100%</span>
         </button>
-        <button class="touch-btn" data-action="view:fullscreen" data-ref="fullscreen"
+        <button type="button" class="touch-btn" data-action="view:fullscreen" data-ref="fullscreen"
                 title="${this.t('btn_fullscreen')}" aria-label="${this.t('btn_fullscreen')}">
           ${icon('expand', { size: 22 })}
         </button>
-        <button class="touch-btn" data-action="game:pause"
+        <button type="button" class="touch-btn" data-action="game:pause"
                 title="${this.t('btn_pause')}" aria-label="${this.t('btn_pause')}">
           ${icon('pause', { size: 22 })}
         </button>

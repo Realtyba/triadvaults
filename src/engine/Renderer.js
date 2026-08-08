@@ -5,6 +5,7 @@ import { setMaxAnisotropy, disposeTextureCache } from './textures.js';
 import { disposeSharedGeometry } from '../procedural/DungeonGen.js';
 import { isHandheld, watchViewport } from './device.js';
 import { EnvironmentBuilder } from './environment.js';
+import { yieldToMain } from '../utils/async.js';
 
 /** Color de fondo y niebla por defecto, hasta que un nivel imponga su tema. */
 const DEFAULT_ATMOSPHERE = { bg: 0x060812, fogDensity: 0.035, color: 0x00f3ff };
@@ -144,20 +145,51 @@ export class EngineRenderer {
    * empieza fluido. Al forzar temporeramente la visibilidad, evitamos que Three.js
    * se salte los objetos ocultos (como las compuertas antes de resolver el nivel).
    */
-  precompile(scene, camera) {
+  async precompile(scene, camera) {
     if (this.renderer && scene && camera) {
       const invisibles = [];
+      const culled = [];
       scene.traverse(obj => {
         if (obj.visible === false) {
           obj.visible = true;
           invisibles.push(obj);
         }
+        // Three.js no compila los objetos fuera del frustum, lo que causa un freeze
+        // enorme cuando objetos distantes (como las puertas) aparecen de repente.
+        if (obj.frustumCulled) {
+          obj.frustumCulled = false;
+          culled.push(obj);
+        }
       });
       
-      this.renderer.compile(scene, camera);
+      if (this.renderer.extensions.get('KHR_parallel_shader_compile') && this.renderer.compileAsync) {
+        await this.renderer.compileAsync(scene, camera);
+      } else {
+        // En navegadores sin KHR_parallel_shader_compile, compile() bloquea el hilo entero.
+        // Lo partimos en grupos pequeños para que la UI (y el spinner) respiren.
+        const meshes = [];
+        scene.traverse(obj => {
+          if (obj.isMesh || obj.isInstancedMesh) {
+            meshes.push(obj);
+            obj.visible = false;
+          }
+        });
+
+        for (let i = 0; i < meshes.length; i++) {
+          meshes[i].visible = true;
+          this.renderer.compile(scene, camera);
+          meshes[i].visible = false;
+          if (i % 3 === 0) await yieldToMain();
+        }
+
+        meshes.forEach(m => m.visible = true);
+      }
       
       invisibles.forEach(obj => {
         obj.visible = false;
+      });
+      culled.forEach(obj => {
+        obj.frustumCulled = true;
       });
     }
   }

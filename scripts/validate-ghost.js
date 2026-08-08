@@ -36,7 +36,7 @@ let fieldsChecked = 0;
 let worstDistance = 0;
 
 for (let i = 0; i < LAYOUTS; i++) {
-  const layout = generateLayout(1 + (i % 40), 7919 * (i + 1), i % 3, 1 + (i % 3));
+  const layout = await generateLayout(1 + (i % 40), 7919 * (i + 1), i % 3, 1 + (i % 3));
   const grid = layout.grid;
 
   const field = grid.computeFlowField(layout.spawnCell.col, layout.spawnCell.row);
@@ -91,7 +91,7 @@ console.log(`  ✓ descender por el campo termina siempre en la presa`);
 
 let sightChecked = 0;
 for (let i = 0; i < 40; i++) {
-  const layout = generateLayout(1 + (i % 20), 104729 * (i + 1), 0, 1);
+  const layout = await generateLayout(1 + (i % 20), 104729 * (i + 1), 0, 1);
   const grid = layout.grid;
   const cells = [];
 

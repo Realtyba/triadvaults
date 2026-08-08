@@ -52,7 +52,7 @@ export class DungeonGenerator {
   async generateLevel(levelNum = 1, baseSeed = 1, seedOffset = 0, plateCount = 1) {
     this.clear();
 
-    const layout = generateLayout(levelNum, baseSeed, seedOffset, plateCount);
+    const layout = await generateLayout(levelNum, baseSeed, seedOffset, plateCount);
     this.layout = layout;
     
     await yieldToMain();

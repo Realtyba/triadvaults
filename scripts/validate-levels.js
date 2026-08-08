@@ -121,7 +121,7 @@ for (let level = 1; level <= LEVELS; level++) {
       }
 
       const nodeCount = Archetype.nodeCount(playersCount);
-      const layout = generateLayout(level, baseSeed, 0, nodeCount);
+      const layout = await generateLayout(level, baseSeed, 0, nodeCount);
       const { problems, openRatio } = checkLayout(layout, level, seed, nodeCount);
 
       // Determinismo de la colocación. Es LA comprobación crítica de este cambio:
@@ -129,7 +129,7 @@ for (let level = 1; level <= LEVELS; level++) {
       // cuenta, así que si el sorteo de salidas no fuese reproducible, cada jugador
       // vería las compuertas en un sitio distinto y nada lo delataría hasta que uno
       // cruzase una puerta que para los demás no existe.
-      const twin = generateLayout(level, baseSeed, 0, nodeCount);
+      const twin = await generateLayout(level, baseSeed, 0, nodeCount);
       const same =
         twin.exitCells.length === layout.exitCells.length &&
         twin.exitCells.every((c, i) => c.col === layout.exitCells[i].col && c.row === layout.exitCells[i].row) &&

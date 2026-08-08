@@ -1,5 +1,6 @@
 import { createRandom, deriveSeed, seedLabel } from './rng.js';
 import { NavGrid, CELL_SIZE } from './NavGrid.js';
+import { yieldToMain } from '../utils/async.js';
 
 /**
  * Trazado de la sala como datos puros: sin Three.js, para poder validarlo
@@ -256,7 +257,7 @@ function buildAttempt(levelNum, seed, plateCount, exitCount = 1) {
  * Genera un trazado jugable. Reintenta con semillas derivadas hasta que la salida
  * y las placas son alcanzables; devuelve el mejor intento si se agotan los reintentos.
  */
-export function generateLayout(levelNum = 1, baseSeed = 1, seedOffset = 0, plateCount = 1) {
+export async function generateLayout(levelNum = 1, baseSeed = 1, seedOffset = 0, plateCount = 1) {
   const exitCount = exitCountForLevel(levelNum);
   let best = null;
 
@@ -264,6 +265,8 @@ export function generateLayout(levelNum = 1, baseSeed = 1, seedOffset = 0, plate
   // aparición y salidas: una tirada mala —salidas en un rincón que los muros
   // acaban aislando— se corrige sola en el intento siguiente.
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    await yieldToMain();
+    
     const seed = deriveSeed(baseSeed, levelNum, seedOffset + attempt);
     const layout = buildAttempt(levelNum, seed, plateCount, exitCount);
     layout.attempts = attempt + 1;

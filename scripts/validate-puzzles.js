@@ -38,7 +38,7 @@ function check(condition, pass, fail) {
 /** Monta un arquetipo sobre un trazado real. */
 async function build(Type, playersCount, level = 20, seed = 7919) {
   const nodeCount = Type.nodeCount(playersCount);
-  const layout = generateLayout(level, seed, 0, nodeCount);
+  const layout = await generateLayout(level, seed, 0, nodeCount);
   const info = {
     ...layout,
     level,

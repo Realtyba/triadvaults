@@ -93,6 +93,13 @@ export class PuzzleElement {
   checkCollision(playerPos) {
     const dx = Math.abs(playerPos.x - this.x);
     const dz = Math.abs(playerPos.z - this.z);
+    
+    // Las puertas tienen un marco de 3.2 de ancho; si el área es muy pequeña,
+    // el jugador puede caminar por un costado y salirse del mapa sin detectarse.
+    if (this.type === 'door') {
+      return dx < 1.5 && dz < 1.5;
+    }
+    
     return dx < 1.0 && dz < 1.0;
   }
 

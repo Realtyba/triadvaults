@@ -72,6 +72,10 @@ export class NetworkBridge {
       this.ui.onGameStarted();
       this.game.startLevel(levelPayload({ level, seed, seedOffset, players }));
     });
+
+    this.socket.on(EVENTS.ROOM_CLOSED_BY_ADMIN, ({ reason }) => {
+      this.ui.onRoomClosedByAdmin(reason);
+    });
   }
 
   registerGameEvents() {

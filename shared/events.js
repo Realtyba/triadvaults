@@ -11,6 +11,7 @@ export const EVENTS = {
   ROOMS_UPDATED: 'rooms_updated',
   ROOM_UPDATED: 'room_updated',
   RECONNECTED_TO_ROOM: 'reconnected_to_room',
+  ROOM_CLOSED_BY_ADMIN: 'room_closed_by_admin',
 
   // partida
   START_GAME: 'start_game',

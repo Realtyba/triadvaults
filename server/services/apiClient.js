@@ -11,6 +11,8 @@
  * agentes de la sala.
  */
 
+import { recordIncident } from './incidentLog.js';
+
 const API_URL = (process.env.TRIADVAULTS_API_URL || '').replace(/\/+$/, '');
 const SECRET = process.env.TRIADVAULTS_INTERNAL_SECRET || '';
 
@@ -51,13 +53,17 @@ async function request(path, { method = 'GET', body = null } = {}) {
     });
 
     if (!response.ok) {
-      console.error(`[api] ${method} ${path} respondió ${response.status}`);
+      const detail = `${method} ${path} respondió ${response.status}`;
+      console.error(`[api] ${detail}`);
+      recordIncident('internal_api_failed', detail);
       return null;
     }
 
     return await response.json();
   } catch (err) {
-    console.error(`[api] ${method} ${path} falló: ${err.message}`);
+    const detail = `${method} ${path} falló: ${err.message}`;
+    console.error(`[api] ${detail}`);
+    recordIncident('internal_api_failed', detail);
     return null;
   }
 }

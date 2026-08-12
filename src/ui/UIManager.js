@@ -614,6 +614,25 @@ export class UIManager {
     this.rooms.refresh();
   }
 
+  /** Un administrador cerró la sala desde el panel. Mismo camino que `onRoomLost`. */
+  onRoomClosedByAdmin(reason) {
+    this.pendingRoomCode = null;
+    this.socket.currentRoom = null;
+    this.stopGame();
+    this.store.patch({
+      view: 'main',
+      room: null,
+      roomCode: '----',
+      paused: false,
+      connection: 'online',
+      modal: 'alert',
+      alertMessage: reason
+        ? this.ctx.t('error_room_closed_by_admin').replace('{0}', reason)
+        : this.ctx.t('error_room_closed_by_admin_generic')
+    });
+    this.rooms.refresh();
+  }
+
   onReconnectAttempt(attempt) {
     this.store.patch({ connection: 'reconnecting', reconnectAttempt: attempt });
   }

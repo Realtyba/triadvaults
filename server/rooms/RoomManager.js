@@ -251,6 +251,30 @@ export class RoomManager {
     return result ? { ...result, code } : null;
   }
 
+  /**
+   * Cierra una sala desde fuera del ciclo normal de juego (panel admin).
+   *
+   * No emite nada por socket.io ni desconecta a nadie: este objeto no conoce `io`.
+   * Solo limpia el estado en memoria; el caller (la ruta admin) es quien avisa a
+   * los clientes y los saca de la room de socket.io.
+   *
+   * @returns {object|null} la sala tal como estaba justo antes de borrarla, o null
+   *   si el código no existe.
+   */
+  forceCloseRoom(code) {
+    const room = this.getRoom(code);
+    if (!room) return null;
+
+    room.players.forEach(p => {
+      this.cancelRemoval(p.uid);
+      this.intentionalLeaves.delete(p.uid);
+      if (this.uidToRoom.get(p.uid) === room.code) this.uidToRoom.delete(p.uid);
+    });
+
+    this.rooms.delete(room.code);
+    return room;
+  }
+
   // ---------------------------------------------------- desconexión suave
 
   /**

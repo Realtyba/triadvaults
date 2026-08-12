@@ -1465,8 +1465,11 @@ label {
 }
 
 /* -------------------------------------------------------------- logros */
+/* Va justo debajo de `.profile-card` dentro del mismo `data-region="profile"`,
+   que no es un hijo flex de `.menu-shell` y por tanto no hereda su `gap`: sin
+   este margen quedaba pegado al borde inferior de la ficha del agente. */
 .panel--badges {
-  margin-top: calc(var(--space-3) * -1 + var(--space-1));
+  margin-top: var(--space-3);
 }
 
 .badge-row {
@@ -1635,19 +1638,67 @@ label {
   outline-offset: 2px;
 }
 
-/* Entrada al modo sin conexión. Discreta a propósito: es la alternativa, no el
-   camino principal, pero tiene que estar siempre a la vista. */
-.offline-entry {
-  margin: var(--space-4) auto 0;
-  max-width: 420px;
-  text-align: center;
+/* Las dos entradas al juego: crear sala y jugar sin conexión, fichas cuadradas
+   una junto a otra. Son la decisión que abre la partida, no un botón más de la
+   lista, así que van grandes y llamativas; si solo una está visible (sin
+   sesión), se centra igual.
+
+   Sin márgenes automáticos a los lados: un margen `auto` en el eje cruzado de
+   un hijo flex cancela el `stretch` con el que `.menu-shell` lo estira a su
+   ancho completo, y la fila se quedaba encogida al contenido — con dos fichas
+   de sobra para caber en una línea, aun así se partían en dos. El centrado
+   sale de `justify-content`, no del margen. */
+.hero-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
-.offline-entry__hint {
-  margin-top: var(--space-2);
+.btn-hero {
+  flex-direction: column;
+  width: 200px;
+  height: 200px;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  font-size: var(--fs-md);
+  border-width: 2px;
+}
+
+.btn-hero .icon {
+  width: 34px;
+  height: 34px;
+}
+
+.btn-hero.btn-primary {
+  box-shadow: 0 0 22px rgba(0, 243, 255, 0.25);
+}
+
+/* Jugar sin conexión en morado en vez del acento del tema: junto a crear sala,
+   dos fichas del mismo color se leían como una sola acción repetida. */
+.btn-hero--alt {
+  border-color: var(--neon-purple);
+  color: var(--neon-purple);
+}
+
+.btn-hero--alt:hover:not(:disabled) {
+  background: rgba(157, 0, 255, 0.12);
+  box-shadow: 0 0 24px rgba(157, 0, 255, 0.35);
+}
+
+.btn-hero .btn__hint {
+  margin-left: 0;
+  font-size: var(--fs-xs);
+}
+
+.hero-actions__hint {
+  margin: var(--space-2) auto 0;
+  max-width: 420px;
   color: var(--text-faint);
   font-size: var(--fs-xs);
   line-height: 1.5;
+  text-align: center;
 }
 
 /* Remapeo de teclas: una fila por acción, con hueco principal y alternativo. */
@@ -2905,12 +2956,6 @@ label {
   .profile-card__actions > * {
     flex: 1 1 auto;
     text-align: center;
-  }
-
-  /* El margen negativo cancela el hueco del menú cuando la tarjeta es una sola
-     fila. Apilada, esos 10 px se comen los botones: es el solape que se veía. */
-  .panel--badges {
-    margin-top: 0;
   }
 
   /* ---- salas ---- */

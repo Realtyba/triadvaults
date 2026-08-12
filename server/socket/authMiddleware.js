@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { recordIncident } from '../services/incidentLog.js';
 
 /**
  * Autentica el handshake del socket.
@@ -58,7 +59,8 @@ export function socketAuthMiddleware(socket, next) {
       tokenVersion: Number(decoded.tv) || 1
     };
     return next();
-  } catch {
+  } catch (err) {
+    recordIncident('auth_rejected', err.message);
     return next(new Error('Autenticación denegada: Token inválido.'));
   }
 }

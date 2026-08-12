@@ -8,6 +8,8 @@ import { dirname, join } from 'path';
 
 import { registerSocketLayer } from './socket/index.js';
 import { apiIsConfigured } from './services/apiClient.js';
+import { recordIncident } from './services/incidentLog.js';
+import { registerAdminRoutes } from './admin/routes.js';
 
 /**
  * Servidor de salas de Triad Vaults.
@@ -61,12 +63,25 @@ const io = new Server(httpServer, {
 
 if (!apiIsConfigured()) {
   console.warn(
-    '⚠️  TRIADVAULTS_API_URL o TRIADVAULTS_INTERNAL_SECRET no están definidos: ' +
+    'TRIADVAULTS_API_URL o TRIADVAULTS_INTERNAL_SECRET no están definidos: ' +
       'se podrá jugar, pero el progreso y los logros no se guardarán.'
   );
 }
 
 const roomManager = registerSocketLayer(io);
+registerAdminRoutes(app, io, roomManager);
+
+// Red de seguridad de última instancia: sin esto, una excepción fuera de un
+// handler de socket (que ya atrapa las suyas) tira el proceso entero —y con él,
+// todas las salas en memoria— sin dejar ningún rastro más que el stack en stdout.
+process.on('uncaughtException', err => {
+  console.error('[uncaughtException]', err);
+  recordIncident('uncaught_exception', err.message);
+});
+process.on('unhandledRejection', reason => {
+  console.error('[unhandledRejection]', reason);
+  recordIncident('unhandled_rejection', reason instanceof Error ? reason.message : String(reason));
+});
 
 httpServer.listen(PORT, () => {
   console.log(`⚡ Triad Vaults — servidor de salas en http://localhost:${PORT}`);

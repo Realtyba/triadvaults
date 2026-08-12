@@ -158,6 +158,8 @@
   "error_internal": "An internal error occurred.",
   "error_no_webgl": "Your browser could not start WebGL, so the 3D scene will not render. Update your browser or enable hardware acceleration.",
   "error_room_lost": "The previous room no longer exists on the server. Create it again or join another one.",
+  "error_room_closed_by_admin": "The room was closed by an administrator: {0}",
+  "error_room_closed_by_admin_generic": "The room was closed by an administrator.",
   "settings_title": "SETTINGS",
   "settings_quality": "Graphics quality",
   "settings_quality_hint": "Lower the quality if the game stutters. Applies instantly.",

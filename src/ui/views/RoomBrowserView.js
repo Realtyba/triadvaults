@@ -1,6 +1,5 @@
 import { View } from './View.js';
 import { esc } from '../dom.js';
-import { icon } from '../icons.js';
 import { renderRoomCard } from '../components/RoomCard.js';
 import { ROOM_STATUS, CODE_LENGTH } from '../../../shared/constants.js';
 
@@ -39,6 +38,8 @@ function partition(rooms) {
  * Antes, crear sala, unirse por código, la lista y el ranking convivían apilados en
  * un mismo bloque, y la lista escondía toda sala llena o en partida. Ahora las
  * acciones están separadas de la exploración y el estado de cada sala es explícito.
+ * Crear sala vive en `MainMenuView` como acción hero junto a jugar sin conexión;
+ * aquí solo queda unirse por código, que depende de esta lista para dar feedback.
  */
 export class RoomBrowserView extends View {
   static keys = ['rooms', 'roomFilter', 'lang', 'user', 'connection'];
@@ -51,16 +52,9 @@ export class RoomBrowserView extends View {
     const rooms = state.rooms || [];
     const byFilter = partition(rooms);
     const visible = byFilter[state.roomFilter] || rooms;
-    const level = state.user ? state.user.maxLevelReached : 1;
 
     return `
       <section class="panel panel--actions">
-        <button class="btn btn-primary btn-block" data-action="room:create">
-          <span class="btn__icon">${icon('bolt', { size: 18 })}</span>
-          <span>${this.t('btn_create_room')}</span>
-          <span class="btn__hint">${this.t('level')} ${esc(level)}</span>
-        </button>
-
         <div class="join-by-code">
           <input
             type="text"

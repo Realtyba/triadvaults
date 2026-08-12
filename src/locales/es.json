@@ -158,6 +158,8 @@
   "error_internal": "Se ha producido un error interno.",
   "error_no_webgl": "Tu navegador no puede iniciar WebGL, así que no se verá la escena 3D. Actualiza el navegador o activa la aceleración por hardware.",
   "error_room_lost": "La sala anterior ya no existe en el servidor. Vuelve a crearla o únete a otra.",
+  "error_room_closed_by_admin": "Un administrador cerró la sala: {0}",
+  "error_room_closed_by_admin_generic": "Un administrador cerró la sala.",
   "settings_title": "AJUSTES",
   "settings_quality": "Calidad gráfica",
   "settings_quality_hint": "Baja la calidad si el juego va a tirones. Se aplica al instante.",

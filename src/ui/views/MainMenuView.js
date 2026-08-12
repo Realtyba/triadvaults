@@ -50,14 +50,21 @@ export class MainMenuView {
         <div data-region="profile"></div>
         <div data-region="auth"></div>
 
-        <!-- Siempre visible, con y sin sesión: es la vía de entrada para quien no
-             tiene cuenta, o la tiene pero no hay servidor al que conectarse. -->
-        <div class="offline-entry">
-          <button class="btn btn-outline btn-block" data-action="game:offline" data-region="offline-btn">
-            ${icon('bolt')} <span>${this.t('btn_play_offline')}</span>
+        <!-- Las dos vías de entrada al juego, una fila hero centrada: crear sala
+             solo con sesión (se esconde igual que la columna de salas), jugar sin
+             conexión siempre, con o sin cuenta y aunque no haya servidor. -->
+        <div class="hero-actions">
+          <button class="btn btn-primary btn-hero" data-action="room:create" data-region="create-btn">
+            ${icon('bolt', { size: 34 })}
+            <span>${this.t('btn_create_room')}</span>
+            <span class="btn__hint" data-region="create-level-hint"></span>
           </button>
-          <p class="offline-entry__hint" data-region="offline-hint">${this.t('offline_hint')}</p>
+          <button class="btn btn-outline btn-hero btn-hero--alt" data-action="game:offline" data-region="offline-btn">
+            ${icon('bolt', { size: 34 })}
+            <span>${this.t('btn_play_offline')}</span>
+          </button>
         </div>
+        <p class="hero-actions__hint" data-region="offline-hint">${this.t('offline_hint')}</p>
         <div class="menu-columns" data-region="columns">
           <div data-region="rooms"></div>
           <div data-region="rank"></div>
@@ -108,6 +115,15 @@ export class MainMenuView {
       if (dot) dot.classList.toggle('is-offline', offline);
       const label = statusEl.lastElementChild;
       if (label) label.textContent = this.t(offline ? 'server_offline' : 'server_online');
+    }
+
+    // Crear sala exige sesión, igual que la columna de salas: se esconde con ella
+    // en vez de deshabilitarse, porque sin cuenta no hay nivel que mostrar en el hint.
+    const createBtn = this.root.querySelector('[data-region="create-btn"]');
+    if (createBtn) {
+      createBtn.classList.toggle('hidden', !authenticated);
+      const levelHint = createBtn.querySelector('[data-region="create-level-hint"]');
+      if (levelHint && authenticated) levelHint.textContent = `${this.t('level')} ${state.user.maxLevelReached}`;
     }
 
     // Una cuenta sin verificar no juega, tampoco sin conexión. Se deshabilita el
